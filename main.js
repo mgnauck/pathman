@@ -1,7 +1,7 @@
 const FULLSCREEN = false;
 
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 1280;
+const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
 let canvas;

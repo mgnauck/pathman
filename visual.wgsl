@@ -40,26 +40,36 @@ struct LambertMaterial
   albedo: vec3f
 }
 
+struct MetalMaterial
+{
+  albedo: vec3f,
+  fuzzRadius: f32
+}
+
 const epsilon = 0.001;
 const pi = 3.141592;
 const maxDist = 3.402823466e+38;
-const samplesPerPixel = 50u;
-const maxRecursion = 5u;
+const samplesPerPixel = 100u;
+const maxRecursion = 50u;
+
+const lambertMaterialCount = 2;
+var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
+  LambertMaterial(vec3f(0.8, 0.8, 0.0)),
+  LambertMaterial(vec3f(0.7, 0.3, 0.3))
+);
+
+const metalMaterialCount = 2;
+var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
+  MetalMaterial(vec3f(0.8), 0.3),
+  MetalMaterial(vec3f(0.8, 0.6, 0.2), 1.0)
+);
 
 const sphereCount = 4;
 var<private> spheres = array<Sphere, sphereCount>(
-  Sphere(vec3f(-0.3, 0, -1.2), 0.6, 0, 1),
-  Sphere(vec3f(0.3, 0, -1), 0.3, 0, 2),
-  Sphere(vec3f(0, 0, -0.7), 0.3, 0, 3),
-  Sphere(vec3f(0, -100.5, -1), 100, 0, 0)
-);
-
-const lambertMaterialCount = 4;
-var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
-  LambertMaterial(vec3f(0.5)),
-  LambertMaterial(vec3f(0.3, 0.3, 0.6)),
-  LambertMaterial(vec3f(0.3, 0.6, 0.3)),
-  LambertMaterial(vec3f(0.6, 0.3, 0.3)),
+  Sphere(vec3f(0, -100.5, -1), 100, 0, 0),
+  Sphere(vec3f(0, 0, -1), 0.5, 0, 1),
+  Sphere(vec3f(-1, 0, -1), 0.5, 1, 0),
+  Sphere(vec3f(1, 0, -1), 0.5, 1, 1)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
@@ -118,58 +128,67 @@ fn rayPos(r: Ray, t: f32) -> vec3f
 fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
 {
   let oc = r.ori - s.center;
-  let b = dot(oc, r.dir);
+  let a = dot(r.dir, r.dir);
+  let b = dot(oc, r.dir); // half
   let c = dot(oc, oc) - s.radius * s.radius;
 
-  // Origin outside of sphere (c > 0) and dir pointing away from sphere (b >0)
-  if(c > 0 && b > 0) {
-    return false;
-  }
-
-  let d = b * b - c;
-
-  // Negative discriminant = ray missing sphere
+  let d = b * b - a * c;
   if(d < 0) {
     return false;
   }
 
-  // Solve considering min/max interval and inside sphere situation
-  let sd = sqrt(d);
-  var t = -b - sd;
-  var inside = 1.0;
+  let sqrtd = sqrt(d);
+  var t = (-b - sqrtd) / a;
   if(t <= tmin || tmax <= t) {
-    t = -b + sd;
+    t = (-b + sqrtd) / a;
     if(t <= tmin || tmax <= t) {
       return false;
     }
-    inside = -1.0;
   }
 
   (*h).t = t;
   (*h).pos = r.ori + t * r.dir;
-  (*h).nrm = inside * ((*h).pos - s.center) / s.radius;
+  (*h).nrm = ((*h).pos - s.center) / s.radius;
+  (*h).nrm *= select(-1.0, 1.0, dot(r.dir, (*h).nrm) < 0);
   (*h).matType = s.matType;
   (*h).matId = s.matId;
 
   return true;
 }
 
-fn evalMaterialLambert(r: Ray, h: Hit, att: ptr<function, vec3f>, s: ptr<function, Ray>)
+fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  var dir = h.nrm + rand3Hemi(h.nrm); 
-  *s = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(epsilon))));
+  let dir = h.nrm + rand3Unit(); 
+  *out = Ray(h.pos, select(dir, h.nrm, all(abs(dir) < vec3f(epsilon))));
   *att = lambertMaterials[h.matId].albedo;
+  return true;
 }
 
-fn evalMaterial(r: Ray, h: Hit, att: ptr<function, vec3f>, s: ptr<function, Ray>)
+fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+{
+  let mat = &metalMaterials[h.matId];
+  let dir = reflect(normalize(in.dir), h.nrm);
+  *out = Ray(h.pos, dir + (*mat).fuzzRadius * rand3Unit());
+  *att = (*mat).albedo;
+  return dot((*out).dir, h.nrm) > 0;
+}
+
+fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
   switch(h.matType)
   {
-    // TODO
+    case 1: {
+      return evalMaterialMetal(in, h, att, out);
+    }
+    case 2: {
+      // TODO
+    }
     default: {
-      evalMaterialLambert(r, h, att, s);
+      return evalMaterialLambert(in, h, att, out);
     }
   }
+
+  return false;
 }
 
 fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
@@ -196,12 +215,13 @@ fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
     if(intersectPrimitives(r, 0.001, maxDist, &h)) {
       var att: vec3f;
       var s: Ray;
-      evalMaterial(r, h, &att, &s);
-      c *= att;
-      r = s;
+      if(evalMaterial(r, h, &att, &s)) {
+        c *= att;
+        r = s;
+      }
     } else {
       let t = (normalize(r.dir).y + 1.0) * 0.5;
-      c *= (1.0 - t) * vec3f(1.0) + t * vec3f(0.3, 0.7, 1.0);
+      c *= (1.0 - t) * vec3f(1.0) + t * vec3f(0.5, 0.7, 1.0);
       break;
     }
 
@@ -228,7 +248,8 @@ fn makePrimaryRay(width: f32, height: f32, focalLen: f32, eye: vec3f, pixelPos: 
   var pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
   pixelTarget += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
 
-  return Ray(eye, normalize(pixelTarget - eye));
+  return Ray(eye, pixelTarget - eye);
+  //return Ray(eye, normalize(pixelTarget - eye));
 }
 
 @compute @workgroup_size(8,8)
@@ -242,13 +263,11 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   let index = u32(global.width) * globalId.y + globalId.x;
 
-  spheres[0].center.y = sin(global.time * 0.7) * 0.5;
-  spheres[1].center.y = cos(global.time * 0.5) * 0.7;
-  spheres[2].center.y = cos(global.time * 0.2) * 0.3;
+  spheres[1].center.y = sin(global.time);
 
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
-    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(sin(global.time * 0.5), cos(global.time * 0.3) * 0.4, 0.0), vec2f(globalId.xy));
+    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
     col += render(ray, maxDist, maxRecursion);
   }
 
