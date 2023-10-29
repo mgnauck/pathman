@@ -16,6 +16,7 @@ struct Hit
   t: f32,
   pos: vec3f,
   nrm: vec3f,
+  inside: bool,
   matType: u32,
   matId: u32
 }
@@ -46,6 +47,12 @@ struct MetalMaterial
   fuzzRadius: f32
 }
 
+struct DielectricMaterial
+{
+  albedo: vec3f,
+  refractionIndex: f32
+}
+
 const epsilon = 0.001;
 const pi = 3.141592;
 const maxDist = 3.402823466e+38;
@@ -64,11 +71,17 @@ var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
   MetalMaterial(vec3f(0.8, 0.6, 0.2), 1.0)
 );
 
+const dielectricMaterialCount = 2;
+var<private> dielectricMaterials = array<DielectricMaterial, dielectricMaterialCount>(
+  DielectricMaterial(vec3f(1), 1.5),
+  DielectricMaterial(vec3f(1), 1.5)
+);
+
 const sphereCount = 4;
 var<private> spheres = array<Sphere, sphereCount>(
   Sphere(vec3f(0, -100.5, -1), 100, 0, 0),
-  Sphere(vec3f(0, 0, -1), 0.5, 0, 1),
-  Sphere(vec3f(-1, 0, -1), 0.5, 1, 0),
+  Sphere(vec3f(0, 0, -1), 0.5, 2, 1),
+  Sphere(vec3f(-1, 0, -1), 0.5, 2, 0),
   Sphere(vec3f(1, 0, -1), 0.5, 1, 1)
 );
 
@@ -149,7 +162,8 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
   (*h).t = t;
   (*h).pos = r.ori + t * r.dir;
   (*h).nrm = ((*h).pos - s.center) / s.radius;
-  (*h).nrm *= select(-1.0, 1.0, dot(r.dir, (*h).nrm) < 0);
+  (*h).inside = dot(r.dir, (*h).nrm) > 0;
+  (*h).nrm *= select(1.0, -1.0, (*h).inside);
   (*h).matType = s.matType;
   (*h).matId = s.matId;
 
@@ -173,6 +187,16 @@ fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<functi
   return dot((*out).dir, h.nrm) > 0;
 }
 
+fn evalMaterialDielectric(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+{
+  let mat = &dielectricMaterials[h.matId];
+  let refractionRatio = select(1.0 / (*mat).refractionIndex, (*mat).refractionIndex, h.inside);
+  let dir = refract(normalize(in.dir), h.nrm, refractionRatio);
+  *out = Ray(h.pos, dir);
+  *att = (*mat).albedo;
+  return true;
+}
+
 fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
   switch(h.matType)
@@ -181,14 +205,12 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
       return evalMaterialMetal(in, h, att, out);
     }
     case 2: {
-      // TODO
+      return evalMaterialDielectric(in, h, att, out);
     }
     default: {
       return evalMaterialLambert(in, h, att, out);
     }
   }
-
-  return false;
 }
 
 fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
