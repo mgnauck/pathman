@@ -16,25 +16,50 @@ struct Hit
   t: f32,
   pos: vec3f,
   nrm: vec3f,
+  matType: u32,
+  matId: u32
 }
 
 struct Sphere
 {
   center: vec3f,
-  radius: f32
+  radius: f32,
+  matType: u32,
+  matId: u32
 }
 
+struct Box
+{
+  // TODO
+  matType: u32,
+  matId: u32
+}
+
+struct LambertMaterial
+{
+  albedo: vec3f
+}
+
+const epsilon = 0.001;
 const pi = 3.141592;
 const maxDist = 3.402823466e+38;
-const samplesPerPixel = 10u;
+const samplesPerPixel = 50u;
 const maxRecursion = 5u;
 
 const sphereCount = 4;
 var<private> spheres = array<Sphere, sphereCount>(
-  Sphere(vec3f(-0.3, 0, -1.2), 0.6),
-  Sphere(vec3f(0.3, 0, -1), 0.3),
-  Sphere(vec3f(0, 0, -0.7), 0.3),
-  Sphere(vec3f(0, -100.5, -1), 100)
+  Sphere(vec3f(-0.3, 0, -1.2), 0.6, 0, 1),
+  Sphere(vec3f(0.3, 0, -1), 0.3, 0, 2),
+  Sphere(vec3f(0, 0, -0.7), 0.3, 0, 3),
+  Sphere(vec3f(0, -100.5, -1), 100, 0, 0)
+);
+
+const lambertMaterialCount = 4;
+var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
+  LambertMaterial(vec3f(0.5)),
+  LambertMaterial(vec3f(0.3, 0.3, 0.6)),
+  LambertMaterial(vec3f(0.3, 0.6, 0.3)),
+  LambertMaterial(vec3f(0.6, 0.3, 0.3)),
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
@@ -123,8 +148,28 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
   (*h).t = t;
   (*h).pos = r.ori + t * r.dir;
   (*h).nrm = inside * ((*h).pos - s.center) / s.radius;
+  (*h).matType = s.matType;
+  (*h).matId = s.matId;
 
   return true;
+}
+
+fn evalMaterialLambert(r: Ray, h: Hit, att: ptr<function, vec3f>, s: ptr<function, Ray>)
+{
+  var dir = h.nrm + rand3Hemi(h.nrm); 
+  *s = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(epsilon))));
+  *att = lambertMaterials[h.matId].albedo;
+}
+
+fn evalMaterial(r: Ray, h: Hit, att: ptr<function, vec3f>, s: ptr<function, Ray>)
+{
+  switch(h.matType)
+  {
+    // TODO
+    default: {
+      evalMaterialLambert(r, h, att, s);
+    }
+  }
 }
 
 fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
@@ -149,11 +194,14 @@ fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
 
   loop {
     if(intersectPrimitives(r, 0.001, maxDist, &h)) {
-      r = Ray(h.pos, normalize(rand3Hemi(h.nrm) + h.nrm));
-      c *= 0.5;
+      var att: vec3f;
+      var s: Ray;
+      evalMaterial(r, h, &att, &s);
+      c *= att;
+      r = s;
     } else {
       let t = (normalize(r.dir).y + 1.0) * 0.5;
-      c *= (1.0 - t) * vec3f(1.0) + t * vec3f(0.5, 0.7, 1.0);
+      c *= (1.0 - t) * vec3f(1.0) + t * vec3f(0.3, 0.7, 1.0);
       break;
     }
 
