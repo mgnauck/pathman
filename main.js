@@ -127,7 +127,7 @@ function render(time)
 
   update(time);
 
-  device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([CANVAS_WIDTH, CANVAS_HEIGHT, time, 0]));
+  device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([CANVAS_WIDTH, CANVAS_HEIGHT, time]));
   
   let commandEncoder = device.createCommandEncoder();
   encodeComputePassAndSubmit(commandEncoder, computePipeline, bindGroup, Math.ceil(CANVAS_WIDTH / 8), Math.ceil(CANVAS_HEIGHT / 8), 1);
