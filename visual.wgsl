@@ -25,20 +25,35 @@ struct Sphere
   radius: f32
 }
 
-const sphere_count = 2;
-var<private> spheres = array<Sphere, sphere_count>(
-  Sphere(vec3f(0, 0, -1), 0.6),
-  Sphere(vec3f(0, -105, -1), 100)
+var<private> seed: vec3u;
+
+const samplesPerPixel = 10;
+
+const sphereCount = 2;
+var<private> spheres = array<Sphere, sphereCount>(
+  Sphere(vec3f(0, 0, -1), 0.5),
+  Sphere(vec3f(0, -100.5, -1), 100)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
 @group(0) @binding(1) var<storage, read_write> buffer: array<vec4f>;
 
-fn rand(p: vec2f) -> f32
+// PRNG taken from WebGPU samples
+fn initRand(invocationId: vec3u, initialSeed: vec3u)
 {
-  // Random v3 by Michael Pohoreski
-  // https://stackoverflow.com/questions/5149544/can-i-generate-a-random-number-inside-a-pixel-shader
-  return fract(cos(dot(p, vec2f(23.14069263277926, 2.665144142690225))) * 12345.6789);
+  const A = vec3(1741651 * 1009,
+                 140893  * 1609 * 13,
+                 6521    * 983  * 7 * 2);
+  seed = (invocationId * A) ^ initialSeed;
+}
+
+fn rand() -> f32
+{
+  const C = vec3(60493  * 9377,
+                 11279  * 2539 * 23,
+                 7919   * 631  * 5 * 3);
+  seed = (seed * C) ^ (seed.yzx >> vec3(4u));
+  return f32(seed.x ^ seed.y) / f32(0xffffffff);
 }
 
 fn rayPos(r: Ray, t: f32) -> vec3f
@@ -84,7 +99,7 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
 fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
 {
   var currMinDist = tmax;
-  for(var i=0u; i<sphere_count; i++) {
+  for(var i=0u; i<sphereCount; i++) {
     var tempHit: Hit;
     if(intersect(spheres[i], r, tmin, currMinDist, &tempHit)) {
       currMinDist = tempHit.t;
@@ -116,7 +131,8 @@ fn makePrimaryRay(width: f32, height: f32, focalLen: f32, eye: vec3f, pixelPos: 
   let viewportTopLeft = eye - vec3f(0, 0, focalLen) - 0.5 * (viewportRight + viewportDown);
   let pixelTopLeft = viewportTopLeft + 0.5 * (pixelDeltaX + pixelDeltaY);
 
-  let pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
+  var pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
+  pixelTarget += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
 
   return Ray(eye, pixelTarget - eye);
 }
@@ -127,11 +143,18 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   if(globalId.x >= u32(global.width) || globalId.y >= u32(global.height)) {
     return;
   }
+  
+  initRand(globalId, vec3u(273478237, 13, 89873));
 
   let index = u32(global.width) * globalId.y + globalId.x;
 
-  let ray = makePrimaryRay(global.width, global.height, 1.0, 0.2 * vec3f(sin(global.time * 0.7), 1.0 + cos(global.time * 0.6), sin(global.time * 0.5)), vec2f(globalId.xy));
-  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(render(ray), 1.0);
+  var col = vec3f(0);
+  for(var i=0; i<samplesPerPixel; i++) {
+    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
+    col += render(ray);
+  }
+
+  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(col / samplesPerPixel, 1.0);
 }
 
 @vertex
