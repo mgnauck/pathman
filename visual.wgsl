@@ -62,27 +62,26 @@ const maxRecursion = 50u;
 const lambertMaterialCount = 2;
 var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
   LambertMaterial(vec3f(0.8, 0.8, 0.0)),
-  LambertMaterial(vec3f(0.7, 0.3, 0.3))
+  LambertMaterial(vec3f(0.1, 0.2, 0.5))
 );
 
-const metalMaterialCount = 2;
+const metalMaterialCount = 1;
 var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
-  MetalMaterial(vec3f(0.8), 0.3),
-  MetalMaterial(vec3f(0.8, 0.6, 0.2), 1.0)
+  MetalMaterial(vec3f(0.8, 0.6, 0.2), 0.0)
 );
 
-const dielectricMaterialCount = 2;
+const dielectricMaterialCount = 1;
 var<private> dielectricMaterials = array<DielectricMaterial, dielectricMaterialCount>(
-  DielectricMaterial(vec3f(1), 1.5),
-  DielectricMaterial(vec3f(1), 1.5)
+  DielectricMaterial(vec3f(1.0), 1.5)
 );
 
-const sphereCount = 4;
+const sphereCount = 5;
 var<private> spheres = array<Sphere, sphereCount>(
   Sphere(vec3f(0, -100.5, -1), 100, 0, 0),
-  Sphere(vec3f(0, 0, -1), 0.5, 2, 1),
-  Sphere(vec3f(-1, 0, -1), 0.5, 2, 0),
-  Sphere(vec3f(1, 0, -1), 0.5, 1, 1)
+  Sphere(vec3f(-1, 0, -1), 0.5, 0, 1),
+  Sphere(vec3f(0, 0, -1), 0.7, 2, 0),
+  Sphere(vec3f(0, 0, -1), -0.65, 2, 0),
+  Sphere(vec3f(1, 0, -1), 0.5, 1, 0)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
@@ -187,11 +186,34 @@ fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<functi
   return dot((*out).dir, h.nrm) > 0;
 }
 
+fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
+{
+  var r0 = (1 - refractionIndexRatio) / (1 + refractionIndexRatio);
+  r0 = r0 * r0;
+  return r0 + (1 - r0) * pow(1 - cosTheta, 5);
+}
+
 fn evalMaterialDielectric(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
   let mat = &dielectricMaterials[h.matId];
-  let refractionRatio = select(1.0 / (*mat).refractionIndex, (*mat).refractionIndex, h.inside);
-  let dir = refract(normalize(in.dir), h.nrm, refractionRatio);
+  let refracIndexRatio = select(1 / (*mat).refractionIndex, (*mat).refractionIndex, h.inside);
+  let inDir = normalize(in.dir);
+  
+  let cosTheta = min(dot(-inDir, h.nrm), 1);
+  /*let sinTheta = sqrt(1 - cosTheta * cosTheta);
+
+  var dir: vec3f;
+  if(refracIndexRatio * sinTheta > 1 || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
+    dir = reflect(inDir, h.nrm);
+  } else {
+    dir = refract(inDir, h.nrm, refracIndexRatio);
+  }*/
+
+  var dir = refract(inDir, h.nrm, refracIndexRatio);
+  if(all(dir == vec3f(0)) || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
+    dir = reflect(inDir, h.nrm);
+  }
+
   *out = Ray(h.pos, dir);
   *att = (*mat).albedo;
   return true;
@@ -285,7 +307,10 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   let index = u32(global.width) * globalId.y + globalId.x;
 
-  spheres[1].center.y = sin(global.time);
+  spheres[1].radius = 0.3 + 0.25 * cos(global.time);
+  spheres[2].center.y = sin(global.time);
+  spheres[3].center.y = sin(global.time);
+  //spheres[4].center.x = 1.0 + 0.3 * cos(global.time);
 
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
