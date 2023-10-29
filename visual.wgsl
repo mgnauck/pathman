@@ -28,11 +28,18 @@ struct Sphere
 const sphere_count = 2;
 var<private> spheres = array<Sphere, sphere_count>(
   Sphere(vec3f(0, 0, -1), 0.6),
-  Sphere(vec3f(0, -100.5, -1), 100)
+  Sphere(vec3f(0, -105, -1), 100)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
 @group(0) @binding(1) var<storage, read_write> buffer: array<vec4f>;
+
+fn rand(p: vec2f) -> f32
+{
+  // Random v3 by Michael Pohoreski
+  // https://stackoverflow.com/questions/5149544/can-i-generate-a-random-number-inside-a-pixel-shader
+  return fract(cos(dot(p, vec2f(23.14069263277926, 2.665144142690225))) * 12345.6789);
+}
 
 fn rayPos(r: Ray, t: f32) -> vec3f
 {
@@ -121,7 +128,9 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
     return;
   }
 
-  let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
+  let index = u32(global.width) * globalId.y + globalId.x;
+
+  let ray = makePrimaryRay(global.width, global.height, 1.0, 0.2 * vec3f(sin(global.time * 0.7), 1.0 + cos(global.time * 0.6), sin(global.time * 0.5)), vec2f(globalId.xy));
   buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(render(ray), 1.0);
 }
 
