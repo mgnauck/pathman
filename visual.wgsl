@@ -87,7 +87,7 @@ fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> b
   return select(false, true, currMinDist < tmax);
 }
 
-fn intersectScene(r: Ray) -> vec3f
+fn render(r: Ray) -> vec3f
 {
   var h: Hit;
   if(intersectPrimitives(r, 0, 99999, &h)) {
@@ -98,6 +98,22 @@ fn intersectScene(r: Ray) -> vec3f
   return (1.0 - t) * vec3f(1.0) + t * vec3f(0.4, 0.6, 1.0);
 }
 
+fn makePrimaryRay(width: f32, height: f32, focalLen: f32, eye: vec3f, pixelPos: vec2f) -> Ray
+{
+  let viewportRight = vec3f(2 * width / height, 0, 0);
+  let viewportDown = vec3f(0, -2, 0);
+
+  let pixelDeltaX = viewportRight / width;
+  let pixelDeltaY = viewportDown / height;
+
+  let viewportTopLeft = eye - vec3f(0, 0, focalLen) - 0.5 * (viewportRight + viewportDown);
+  let pixelTopLeft = viewportTopLeft + 0.5 * (pixelDeltaX + pixelDeltaY);
+
+  let pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
+
+  return Ray(eye, pixelTarget - eye);
+}
+
 @compute @workgroup_size(8,8)
 fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 {
@@ -105,33 +121,8 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
     return;
   }
 
-  let bufMul = vec2u(1, u32(global.width));
-  let bufPos = vec2f(globalId.xy);
-
-  let focalLen = 1.0;
-
-  let viewportHeight = 2.0;
-  let viewportWidth = viewportHeight * global.width / global.height;
-
-  let viewportRight = vec3f(viewportWidth, 0, 0);
-  let viewportDown = vec3f(0, -viewportHeight, 0);
-
-  let pixelDeltaX = viewportRight / global.width;
-  let pixelDeltaY = viewportDown / global.height;
-
-  let eye = vec3f(0);
-
-  let viewportTopLeft = eye - vec3f(0, 0, focalLen) - viewportRight * 0.5 - viewportDown * 0.5;
-  let pixelTopLeft = viewportTopLeft + (pixelDeltaX + pixelDeltaY) * 0.5;
-
-  let pixelTarget = pixelTopLeft + pixelDeltaX * bufPos.x + pixelDeltaY * bufPos.y;
-  let dir = pixelTarget - eye;
-
-  let ray = Ray(eye, dir);
-
-  let col = intersectScene(ray);
-
-  buffer[dot(globalId.xy, bufMul)] = vec4f(col, 1.0);
+  let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
+  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(render(ray), 1.0);
 }
 
 @vertex
