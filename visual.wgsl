@@ -27,7 +27,8 @@ struct Sphere
 
 var<private> seed: vec3u;
 
-const samplesPerPixel = 10;
+const samplesPerPixel = 10u;
+const maxRecursion = 10u;
 
 const sphereCount = 2;
 var<private> spheres = array<Sphere, sphereCount>(
@@ -54,6 +55,38 @@ fn rand() -> f32
                  7919   * 631  * 5 * 3);
   seed = (seed * C) ^ (seed.yzx >> vec3(4u));
   return f32(seed.x ^ seed.y) / f32(0xffffffff);
+}
+
+fn randBounds(valueMin: f32, valueMax: f32) -> f32
+{
+  return valueMin + rand() * (valueMax - valueMin);
+}
+
+fn rand3() -> vec3f
+{
+  return vec3f(rand(), rand(), rand());
+}
+
+fn rand3Bounds(valueMin: f32, valueMax: f32) -> vec3f
+{
+  return vec3f(randBounds(valueMin, valueMax), randBounds(valueMin, valueMax), randBounds(valueMin, valueMax));
+}
+
+fn rand3Unit() -> vec3f
+{
+  var v: vec3f;
+  loop {
+    v = rand3Bounds(-1, 1);
+    if(dot(v, v) < 1) {
+      return normalize(v);
+    }
+  }
+}
+
+fn rand3Hemi(nrm: vec3f) -> vec3f
+{
+  let v = rand3Unit();
+  return select(-v, v, dot(v, nrm) > 0);
 }
 
 fn rayPos(r: Ray, t: f32) -> vec3f
@@ -109,13 +142,14 @@ fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> b
   return select(false, true, currMinDist < tmax);
 }
 
-fn render(r: Ray) -> vec3f
+fn render(r: Ray, maxRecursion: u32) -> vec3f
 {
   var h: Hit;
   if(intersectPrimitives(r, 0, 99999, &h)) {
     return 0.5 * (vec3f(1.0) + h.nrm);
   }
 
+  // Background
   let t = (normalize(r.dir).y + 1.0) * 0.5;
   return (1.0 - t) * vec3f(1.0) + t * vec3f(0.4, 0.6, 1.0);
 }
@@ -149,12 +183,12 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   let index = u32(global.width) * globalId.y + globalId.x;
 
   var col = vec3f(0);
-  for(var i=0; i<samplesPerPixel; i++) {
+  for(var i=0u; i<samplesPerPixel; i++) {
     let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
-    col += render(ray);
+    col += render(ray, maxRecursion);
   }
 
-  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(col / samplesPerPixel, 1.0);
+  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(col / f32(samplesPerPixel), 1.0);
 }
 
 @vertex
