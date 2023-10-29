@@ -149,7 +149,7 @@ fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
 
   loop {
     if(intersectPrimitives(r, 0.001, maxDist, &h)) {
-      r = Ray(h.pos, rand3Hemi(h.nrm));
+      r = Ray(h.pos, normalize(rand3Hemi(h.nrm) + h.nrm));
       c *= 0.5;
     } else {
       let t = (normalize(r.dir).y + 1.0) * 0.5;
@@ -200,11 +200,11 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
-    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(sin(global.time * 0.5), 0, 0), vec2f(globalId.xy));
+    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(sin(global.time * 0.5), cos(global.time * 0.3) * 0.4, 0.0), vec2f(globalId.xy));
     col += render(ray, maxDist, maxRecursion);
   }
 
-  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(col / f32(samplesPerPixel), 1.0);
+  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(pow(col / f32(samplesPerPixel), vec3f(0.4545)), 1.0);
 }
 
 @vertex
