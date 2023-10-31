@@ -15,6 +15,9 @@ let renderPipeline;
 let renderPassDescriptor;
 let startTime;
 
+const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
+END_VISUAL_SHADER`;
+
 function loadTextFile(url)
 {
   return fetch(url).then(response => response.text());
@@ -110,7 +113,12 @@ async function createResources()
 
 async function createPipelines()
 {
-  let shaderCode = await loadTextFile("visual.wgsl");
+  let shaderCode;
+  if(VISUAL_SHADER.includes("END_VISUAL_SHADER"))
+    shaderCode = await loadTextFile("visual.wgsl");
+  else
+    shaderCode = VISUAL_SHADER;
+
   let shaderModule = device.createShaderModule({code: shaderCode});
 
   computePipeline = await createComputePipeline(shaderModule, pipelineLayout, "computeMain");
