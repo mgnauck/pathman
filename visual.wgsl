@@ -79,8 +79,8 @@ const sphereCount = 5;
 var<private> spheres = array<Sphere, sphereCount>(
   Sphere(vec3f(0, -100.5, -1), 100, 0, 0),
   Sphere(vec3f(-1, 0, -1), 0.5, 0, 1),
-  Sphere(vec3f(0, 0, -1), 0.7, 2, 0),
-  Sphere(vec3f(0, 0, -1), -0.65, 2, 0),
+  Sphere(vec3f(0, 0, -1), 0.5, 2, 0),
+  Sphere(vec3f(0, 0, -1), -0.4, 2, 0),
   Sphere(vec3f(1, 0, -1), 0.5, 1, 0)
 );
 
@@ -278,22 +278,34 @@ fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
   return c;
 }
 
-fn makePrimaryRay(width: f32, height: f32, focalLen: f32, eye: vec3f, pixelPos: vec2f) -> Ray
+fn makePrimaryRay(vertFov: f32, eye: vec3f, tgt: vec3f, vup: vec3f, pixelPos: vec2f) -> Ray
 {
-  let viewportRight = vec3f(2 * width / height, 0, 0);
-  let viewportDown = vec3f(0, -2, 0);
+  // Right handed coordinate system, with camera looking down negative Z
+  var fwd = eye - tgt;
 
-  let pixelDeltaX = viewportRight / width;
-  let pixelDeltaY = viewportDown / height;
+  let focalLen = length(fwd);
+  let height = tan(radians(vertFov) / 2);
 
-  let viewportTopLeft = eye - vec3f(0, 0, focalLen) - 0.5 * (viewportRight + viewportDown);
+  let viewportHeight = 2 * height * focalLen;
+  let viewportWidth = viewportHeight * global.width / global.height;
+
+  fwd /= focalLen;
+  let ri = normalize(cross(vup, fwd));
+  let up = cross(fwd, ri);
+ 
+  let viewportRight = ri * viewportWidth;
+  let viewportDown = -up * viewportHeight;
+
+  let pixelDeltaX = viewportRight / global.width;
+  let pixelDeltaY = viewportDown / global.height;
+
+  let viewportTopLeft = eye - fwd * focalLen - 0.5 * (viewportRight + viewportDown);
   let pixelTopLeft = viewportTopLeft + 0.5 * (pixelDeltaX + pixelDeltaY);
 
   var pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
   pixelTarget += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
 
   return Ray(eye, pixelTarget - eye);
-  //return Ray(eye, normalize(pixelTarget - eye));
 }
 
 @compute @workgroup_size(8,8)
@@ -307,14 +319,14 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   let index = u32(global.width) * globalId.y + globalId.x;
 
-  spheres[1].radius = 0.3 + 0.25 * cos(global.time);
+  /*spheres[1].radius = 0.3 + 0.25 * cos(global.time);
   spheres[2].center.y = sin(global.time);
-  spheres[3].center.y = sin(global.time);
-  //spheres[4].center.x = 1.0 + 0.3 * cos(global.time);
+  spheres[3].center.y = sin(global.time);*/
 
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
-    let ray = makePrimaryRay(global.width, global.height, 1.0, vec3f(0), vec2f(globalId.xy));
+    //let ray = makePrimaryRay(50.0, vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), vec2f(globalId.xy));
+    let ray = makePrimaryRay(50.0, vec3f(4 * sin(global.time), 0, 4 * cos(global.time)), vec3f(0, 0, 0), vec3f(0, 1, 0), vec2f(globalId.xy));
     col += render(ray, maxDist, maxRecursion);
   }
 
