@@ -61,13 +61,13 @@ const maxRecursion = 50u;
 
 const lambertMaterialCount = 2;
 var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
-  LambertMaterial(vec3f(0.8, 0.8, 0.0)),
-  LambertMaterial(vec3f(0.1, 0.2, 0.5))
+  LambertMaterial(vec3f(0.5)),
+  LambertMaterial(vec3f(0.6, 0.3, 0.3))
 );
 
 const metalMaterialCount = 1;
 var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
-  MetalMaterial(vec3f(0.8, 0.6, 0.2), 0.0)
+  MetalMaterial(vec3f(0.3, 0.3, 0.6), 0.0)
 );
 
 const dielectricMaterialCount = 1;
@@ -77,11 +77,11 @@ var<private> dielectricMaterials = array<DielectricMaterial, dielectricMaterialC
 
 const sphereCount = 5;
 var<private> spheres = array<Sphere, sphereCount>(
-  Sphere(vec3f(0, -100.5, -1), 100, 0, 0),
-  Sphere(vec3f(-1, 0, -1), 0.5, 0, 1),
-  Sphere(vec3f(0, 0, -1), 0.5, 2, 0),
-  Sphere(vec3f(0, 0, -1), -0.4, 2, 0),
-  Sphere(vec3f(1, 0, -1), 0.5, 1, 0)
+  Sphere(vec3f(0, -100.5, 0), 100, 0, 0),
+  Sphere(vec3f(-1, 0, 0), 0.5, 0, 1),
+  Sphere(vec3f(0, 0.0, 0), 0.5, 2, 0),
+  Sphere(vec3f(0, 0.0, 0), -0.35, 2, 0),
+  Sphere(vec3f(1, 0, 0), 0.5, 1, 0)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
@@ -115,6 +115,11 @@ fn randRange(valueMin: f32, valueMax: f32) -> f32
 fn rand3() -> vec3f
 {
   return vec3f(rand(), rand(), rand());
+}
+
+fn rand3Range(valueMin: f32, valueMax: f32) -> vec3f
+{
+  return vec3f(randRange(valueMin, valueMax), randRange(valueMin, valueMax), randRange(valueMin, valueMax));
 }
 
 fn rand3Unit() -> vec3f
@@ -343,15 +348,11 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   let index = u32(global.width) * globalId.y + globalId.x;
 
-  /*spheres[1].radius = 0.3 + 0.25 * cos(global.time);
-  spheres[2].center.y = sin(global.time);
-  spheres[3].center.y = sin(global.time);*/ 
-
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
     //let ray = makePrimaryRay(vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), 20, 1, 0, vec2f(globalId.xy));
-    //let ray = makePrimaryRay(vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), 20, 3.4, 10, vec2f(globalId.xy));
-    let ray = makePrimaryRay(vec3f(4 * sin(global.time), 0, 4 * cos(global.time)), vec3f(0, 0, 0), vec3f(0, 1, 0), 60, 3.4, 3, vec2f(globalId.xy));
+    //let ray = makePrimaryRay(vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), 60, 3.4, 3, vec2f(globalId.xy));
+    let ray = makePrimaryRay(vec3f(3 * sin(global.time), 0, 3 * cos(global.time)), vec3f(0, 0, 0), vec3f(0, 1, 0), 60, 3.0, 3, vec2f(globalId.xy));
     col += render(ray, maxDist, maxRecursion);
   }
 
