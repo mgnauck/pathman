@@ -132,6 +132,28 @@ fn rand3Hemi(nrm: vec3f) -> vec3f
   return select(-v, v, dot(v, nrm) > 0);
 }
 
+fn rand2Disk() -> vec2f
+{
+  let u = vec2f(rand(), rand());
+  let uOffset = 2 * u - vec2f(1, 1);
+
+  if(uOffset.x == 0 && uOffset.y == 0) {
+    return vec2f(0);
+  }
+
+  var theta = 0.0;
+  var r = 0.0;
+  if(abs(uOffset.x) > abs(uOffset.y)) {
+    r = uOffset.x;
+    theta = (pi / 4) * (uOffset.y / uOffset.x);
+  } else {
+    r = uOffset.y;
+    theta = (pi / 2) - (pi / 4) * (uOffset.x / uOffset.y);
+  }
+  
+  return r * vec2f(cos(theta), sin(theta));
+}
+
 fn rayPos(r: Ray, t: f32) -> vec3f
 {
   return r.ori + t * r.dir;
@@ -278,18 +300,13 @@ fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
   return c;
 }
 
-fn makePrimaryRay(vertFov: f32, eye: vec3f, tgt: vec3f, vup: vec3f, pixelPos: vec2f) -> Ray
+fn makePrimaryRay(eye: vec3f, tgt: vec3f, vup: vec3f, vertFov: f32, focDist: f32, focAngle: f32, pixelPos: vec2f) -> Ray
 {
-  // Right handed coordinate system, with camera looking down negative Z
-  var fwd = eye - tgt;
-
-  let focalLen = length(fwd);
-  let height = tan(radians(vertFov) / 2);
-
-  let viewportHeight = 2 * height * focalLen;
+  let viewportHeight = 2 * tan(radians(0.5 * vertFov)) * focDist;
   let viewportWidth = viewportHeight * global.width / global.height;
 
-  fwd /= focalLen;
+  // Right handed coordinate system, with camera looking down negative Z
+  let fwd = normalize(eye - tgt);
   let ri = normalize(cross(vup, fwd));
   let up = cross(fwd, ri);
  
@@ -299,13 +316,20 @@ fn makePrimaryRay(vertFov: f32, eye: vec3f, tgt: vec3f, vup: vec3f, pixelPos: ve
   let pixelDeltaX = viewportRight / global.width;
   let pixelDeltaY = viewportDown / global.height;
 
-  let viewportTopLeft = eye - fwd * focalLen - 0.5 * (viewportRight + viewportDown);
+  let viewportTopLeft = eye - focDist * fwd - 0.5 * (viewportRight + viewportDown);
   let pixelTopLeft = viewportTopLeft + 0.5 * (pixelDeltaX + pixelDeltaY);
 
-  var pixelTarget = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
-  pixelTarget += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
+  var pixelSample = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
+  pixelSample += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
 
-  return Ray(eye, pixelTarget - eye);
+  var originSample = eye;
+  if(focAngle > 0) {
+    let focRadius = focDist * tan(0.5 * radians(focAngle));
+    let diskSample = rand2Disk();
+    originSample += focRadius * (diskSample.x * ri + diskSample.y * up);
+  }
+
+  return Ray(originSample, pixelSample - originSample);
 }
 
 @compute @workgroup_size(8,8)
@@ -321,16 +345,17 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   /*spheres[1].radius = 0.3 + 0.25 * cos(global.time);
   spheres[2].center.y = sin(global.time);
-  spheres[3].center.y = sin(global.time);*/
+  spheres[3].center.y = sin(global.time);*/ 
 
   var col = vec3f(0);
   for(var i=0u; i<samplesPerPixel; i++) {
-    //let ray = makePrimaryRay(50.0, vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), vec2f(globalId.xy));
-    let ray = makePrimaryRay(50.0, vec3f(4 * sin(global.time), 0, 4 * cos(global.time)), vec3f(0, 0, 0), vec3f(0, 1, 0), vec2f(globalId.xy));
+    //let ray = makePrimaryRay(vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), 20, 1, 0, vec2f(globalId.xy));
+    //let ray = makePrimaryRay(vec3f(-2, 2, 1), vec3f(0, 0, -1), vec3f(0, 1, 0), 20, 3.4, 10, vec2f(globalId.xy));
+    let ray = makePrimaryRay(vec3f(4 * sin(global.time), 0, 4 * cos(global.time)), vec3f(0, 0, 0), vec3f(0, 1, 0), 60, 3.4, 3, vec2f(globalId.xy));
     col += render(ray, maxDist, maxRecursion);
   }
 
-  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(pow(col / f32(samplesPerPixel), vec3f(0.4545)), 1.0);
+  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(pow(col / f32(samplesPerPixel), vec3f(0.4545)), 1);
 }
 
 @vertex
