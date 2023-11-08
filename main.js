@@ -19,6 +19,7 @@ const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
 let eye, right, up, fwd;
+let phi, theta;
 let vertFov, focDist, focAngle;
 
 const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
@@ -57,40 +58,8 @@ function vec3Normalize(v)
 
 function vec3FromSpherical(theta, phi)
 {
-  return [Math.sin(theta) * Math.cos(phi), Math.sin(theta) * Math.sin(phi), Math.cos(theta)];
-}
-
-function vec3Transform(v, m)
-{
-  const x = v[0];
-  const y = v[1];
-  const z = v[2];
-
-  return [x * m[0] + y * m[4] + z * m[8],
-          x * m[1] + y * m[5] + z * m[9],
-          x * m[2] + y * m[6] + z * m[10]];
-}
-
-function axisRotation(axis, angle)
-{
-  let x = axis[0];
-  let y = axis[1];
-  let z = axis[2];
-  const l = 1.0 / Math.sqrt(x * x + y * y + z * z);
-  x *= l;
-  y *= l;
-  z *= l;
-  const xx = x * x;
-  const yy = y * y;
-  const zz = z * z;
-  const c = Math.cos(angle);
-  const s = Math.sin(angle);
-  const oneMinusCosine = 1 - c;
-
-  return [xx + (1 - xx) * c, x * y * oneMinusCosine + z * s, x * z * oneMinusCosine - y * s, 0,
-          x * y * oneMinusCosine - z * s, yy + (1 - yy) * c, y * z * oneMinusCosine + x * s, 0,
-          x * z * oneMinusCosine + y * s, y * z * oneMinusCosine - x * s, zz + (1 - zz) * c, 0,
-          0, 0, 0, 1]
+  //return [Math.sin(theta) * Math.cos(phi), Math.sin(theta) * Math.sin(phi), Math.cos(theta)]; // Z up
+  return [Math.cos(theta) * Math.sin(phi), Math.sin(theta), Math.cos(theta) * Math.cos(phi)]; // Switching Z and Y
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -237,18 +206,11 @@ function update(time)
   // TODO
 }
 
-function setView(e, f)
+function calcView()
 {
-  eye = e;
-  fwd = f;
-  right = vec3Normalize(vec3Cross([0, 1, 0], fwd));
+  fwd = vec3FromSpherical(theta, phi);
+  right = vec3Cross([0, 1, 0], fwd);
   up = vec3Cross(fwd, right);
-
-  /*console.log("eye: " + eye);
-  console.log("tgt: " + vec3Add(eye, vec3Negate(fwd)));
-  console.log("fwd: " + fwd);
-  console.log("ri: " + right);
-  console.log("up: " + up);*/
 }
 
 function resetView()
@@ -257,26 +219,31 @@ function resetView()
   focDist = 3;
   focAngle = 0;
 
-  let e = [1, 0.1, 2];
-  let t = [0.62, 0.13, 1.1];
+  eye = [0, 0, 2];
+  phi = 0;
+  theta = 0;
 
-  setView(e, vec3Normalize(vec3Add(e, vec3Negate(t))));
+  calcView(); 
 }
 
 function handleCameraKeyEvent(e)
 {
   switch (e.key) {
     case "a":
-      setView(vec3Add(eye, vec3Scale(right, -MOVE_VELOCITY)), fwd);
+      eye = vec3Add(eye, vec3Scale(right, -MOVE_VELOCITY));
+      calcView();
       break;
     case "d":
-      setView(vec3Add(eye, vec3Scale(right, MOVE_VELOCITY)), fwd);
+      eye = vec3Add(eye, vec3Scale(right, MOVE_VELOCITY));
+      calcView();
       break;
     case "w":
-      setView(vec3Add(eye, vec3Scale(fwd, -MOVE_VELOCITY)), fwd);
+      eye = vec3Add(eye, vec3Scale(fwd, -MOVE_VELOCITY));
+      calcView();
       break;
     case "s":
-      setView(vec3Add(eye, vec3Scale(fwd, MOVE_VELOCITY)), fwd);
+      eye = vec3Add(eye, vec3Scale(fwd, MOVE_VELOCITY));
+      calcView();
       break;
     case ",":
       focDist = Math.max(focDist - 0.1, 0.1);
@@ -287,7 +254,7 @@ function handleCameraKeyEvent(e)
       console.log("focDist: " + focDist);
       break;
     case "-":
-      focAngle = Math.max(focAngle - 0.1, 0.0);
+      focAngle = Math.max(focAngle - 0.1, 0);
       console.log("focAngle: " + focAngle);
       break;
     case "+":
@@ -301,22 +268,13 @@ function handleCameraKeyEvent(e)
 }
 
 function handleCameraMouseMoveEvent(e)
-{
-  let yaw = -e.movementX * LOOK_VELOCITY;
-  let pitch = -e.movementY * LOOK_VELOCITY;
+{ 
+  phi = (phi - e.movementX * LOOK_VELOCITY) % (2 * Math.PI);
+  phi += (phi < 0) ? 2.0 * Math.PI : 0;
 
-  const currentPitch = Math.acos(fwd[1]);
-  const newPitch = currentPitch - pitch;
-  const minPitch = Math.PI / 180.0;
-  const maxPitch = 179.0 * Math.PI / 180.0;
+  theta = Math.min(Math.max(theta + e.movementY * LOOK_VELOCITY, -1.5), 1.5);
 
-  if(newPitch < minPitch)
-    pitch = currentPitch - minPitch;
-
-  if(newPitch > maxPitch)
-    pitch = currentPitch - maxPitch;
-
-  setView(eye, vec3Transform(vec3Transform(fwd, axisRotation(right, pitch)), axisRotation([0, 1, 0], yaw)));
+  calcView();
 }
 
 async function handleKeyEvent(e)
