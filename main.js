@@ -1,8 +1,15 @@
 const FULLSCREEN = false;
 
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 800;
+const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
+
+const MAX_RECURSION = 100;
+const SAMPLES_PER_PIXEL = 10;
+const TEMPORAL_RESIDUE = 0.5;
+
+const MOVE_VELOCITY = 0.05;
+const LOOK_VELOCITY = 0.025;
 
 let canvas;
 let context;
@@ -15,12 +22,11 @@ let renderPipeline;
 let renderPassDescriptor;
 let startTime;
 
-const MOVE_VELOCITY = 0.05;
-const LOOK_VELOCITY = 0.025;
-
 let eye, right, up, fwd;
 let phi, theta;
 let vertFov, focDist, focAngle;
+
+let gatheredSamples;
 
 const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
 END_VISUAL_SHADER`;
@@ -112,12 +118,16 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
 async function createResources()
 {
   uniformBuffer = device.createBuffer({
-    // width, height, time, vertFov, focDist, focAngle, eye, right, up, fwd, 6x pad
     size: 24 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
-  let renderBuffer = device.createBuffer({
+  let accumulationBuffer = device.createBuffer({
+    size: CANVAS_WIDTH * CANVAS_HEIGHT * 4 * 4,
+    usage: GPUBufferUsage.STORAGE
+  });
+
+  let imageBuffer = device.createBuffer({
     size: CANVAS_WIDTH * CANVAS_HEIGHT * 4 * 4,
     usage: GPUBufferUsage.STORAGE
   });
@@ -125,7 +135,8 @@ async function createResources()
   let bindGroupLayout = device.createBindGroupLayout({
     entries: [ 
       {binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}},
-      {binding: 1, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
+      {binding: 2, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
     ]
   });
 
@@ -133,7 +144,8 @@ async function createResources()
     layout: bindGroupLayout,
     entries: [
       {binding: 0, resource: {buffer: uniformBuffer}},
-      {binding: 1, resource: {buffer: renderBuffer}}
+      {binding: 1, resource: {buffer: accumulationBuffer}},
+      {binding: 2, resource: {buffer: imageBuffer}}
     ]
   });
 
@@ -176,9 +188,12 @@ function render(time)
   update(time);
 
   device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([
-    CANVAS_WIDTH, CANVAS_HEIGHT, time, vertFov, focDist, focAngle,
-    /* pad1 */ 0, /* pad2 */ 0, ...eye, /* pad3 */ 0,
-    ...right, /* pad4 */ 0, ...up, /* pad5 */ 0, ...fwd, /* pad6 */ 0]));
+    CANVAS_WIDTH, CANVAS_HEIGHT, SAMPLES_PER_PIXEL, MAX_RECURSION,
+    Math.random(), Math.random(), Math.random(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL),
+    ...eye, vertFov,
+    ...right, focDist,
+    ...up, focAngle,
+    ...fwd, time]));
   
   let commandEncoder = device.createCommandEncoder();
   encodeComputePassAndSubmit(commandEncoder, computePipeline, bindGroup, Math.ceil(CANVAS_WIDTH / 8), Math.ceil(CANVAS_HEIGHT / 8), 1);
@@ -186,6 +201,8 @@ function render(time)
   device.queue.submit([commandEncoder.finish()]);
 
   requestAnimationFrame(render);
+
+  gatheredSamples += SAMPLES_PER_PIXEL;
 }
 
 function setPerformanceTimer()
@@ -211,6 +228,9 @@ function calcView()
   fwd = vec3FromSpherical(theta, phi);
   right = vec3Cross([0, 1, 0], fwd);
   up = vec3Cross(fwd, right);
+
+  // Resets the accumulation buffer
+  gatheredSamples = TEMPORAL_RESIDUE * SAMPLES_PER_PIXEL;
 }
 
 function resetView()
@@ -222,8 +242,6 @@ function resetView()
   eye = [0, 0, 2];
   phi = 0;
   theta = 0;
-
-  calcView(); 
 }
 
 function handleCameraKeyEvent(e)
@@ -231,40 +249,34 @@ function handleCameraKeyEvent(e)
   switch (e.key) {
     case "a":
       eye = vec3Add(eye, vec3Scale(right, -MOVE_VELOCITY));
-      calcView();
       break;
     case "d":
       eye = vec3Add(eye, vec3Scale(right, MOVE_VELOCITY));
-      calcView();
       break;
     case "w":
       eye = vec3Add(eye, vec3Scale(fwd, -MOVE_VELOCITY));
-      calcView();
       break;
     case "s":
       eye = vec3Add(eye, vec3Scale(fwd, MOVE_VELOCITY));
-      calcView();
       break;
     case ",":
       focDist = Math.max(focDist - 0.1, 0.1);
-      console.log("focDist: " + focDist);
       break;
     case ".":
       focDist += 0.1;
-      console.log("focDist: " + focDist);
       break;
     case "-":
       focAngle = Math.max(focAngle - 0.1, 0);
-      console.log("focAngle: " + focAngle);
       break;
     case "+":
       focAngle += 0.1;
-      console.log("focAngle: " + focAngle);
       break;
     case "r":
       resetView();
       break;
   }
+
+  calcView();
 }
 
 function handleCameraMouseMoveEvent(e)
@@ -282,6 +294,7 @@ async function handleKeyEvent(e)
   switch (e.key) {
     case "l":
       createPipelines();
+      calcView();
       console.log("Visual shader reloaded");
       break;
   }
@@ -336,6 +349,7 @@ async function main()
 
   await createResources();
   resetView();
+  calcView();
 
   document.body.innerHTML = "<button>CLICK<canvas style='width:0;cursor:none'>";
   canvas = document.querySelector("canvas");

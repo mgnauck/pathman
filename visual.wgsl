@@ -2,20 +2,18 @@ struct Uniforms
 {
   width: f32,
   height: f32,
-  time: f32,
-  vertFov: f32,
-  focDist: f32,
-  focAngle: f32,
-  pad1: f32,
-  pad2: f32,
+  samplesPerPixel: f32,
+  maxRecursion: f32,
+  randSeed: vec3f,
+  weight: f32,
   eye: vec3f,
-  pad3: f32,
+  vertFov: f32,
   right: vec3f,
-  pad4: f32,
+  focDist: f32,
   up: vec3f,
-  pad5: f32,
+  focAngle: f32,
   fwd: vec3f,
-  pad6: f32
+  time: f32
 }
 
 struct Ray
@@ -60,7 +58,7 @@ struct MetalMaterial
   fuzzRadius: f32
 }
 
-struct DielectricMaterial
+struct GlassMaterial
 {
   albedo: vec3f,
   refractionIndex: f32
@@ -69,8 +67,6 @@ struct DielectricMaterial
 const epsilon = 0.001;
 const pi = 3.141592;
 const maxDist = 3.402823466e+38;
-const samplesPerPixel = 50u;
-const maxRecursion = 50u;
 
 const lambertMaterialCount = 2;
 var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
@@ -83,9 +79,9 @@ var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
   MetalMaterial(vec3f(0.3, 0.3, 0.6), 0.0)
 );
 
-const dielectricMaterialCount = 1;
-var<private> dielectricMaterials = array<DielectricMaterial, dielectricMaterialCount>(
-  DielectricMaterial(vec3f(1.0), 1.5)
+const glassMaterialCount = 1;
+var<private> glassMaterials = array<GlassMaterial, glassMaterialCount>(
+  GlassMaterial(vec3f(1.0), 1.5)
 );
 
 const sphereCount = 5;
@@ -99,6 +95,7 @@ var<private> spheres = array<Sphere, sphereCount>(
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
 @group(0) @binding(1) var<storage, read_write> buffer: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> image: array<vec4f>;
 
 var<private> seed: vec3u;
 
@@ -233,9 +230,9 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
   return r0 + (1 - r0) * pow(1 - cosTheta, 5);
 }
 
-fn evalMaterialDielectric(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let mat = &dielectricMaterials[h.matId];
+  let mat = &glassMaterials[h.matId];
   let refracIndexRatio = select(1 / (*mat).refractionIndex, (*mat).refractionIndex, h.inside);
   let inDir = normalize(in.dir);
   
@@ -267,7 +264,7 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
       return evalMaterialMetal(in, h, att, out);
     }
     case 2: {
-      return evalMaterialDielectric(in, h, att, out);
+      return evalMaterialGlass(in, h, att, out);
     }
     default: {
       return evalMaterialLambert(in, h, att, out);
@@ -288,11 +285,11 @@ fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> b
   return currMinDist < tmax;
 }
 
-fn render(ray: Ray, maxDist: f32, maxRecursion: u32) -> vec3f
+fn render(ray: Ray, maxDist: f32) -> vec3f
 {
   var h: Hit;
   var r = ray;
-  var d = maxRecursion;
+  var d = u32(global.maxRecursion);
   var c = vec3f(1);
 
   loop {
@@ -352,16 +349,20 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
     return;
   }
   
-  initRand(globalId, vec3u(37, 98234, 1236734));
+  initRand(globalId, vec3u(global.randSeed * 0xffffffff));
 
-  let index = u32(global.width) * globalId.y + globalId.x;
   var col = vec3f(0);
-
-  for(var i=0u; i<samplesPerPixel; i++) {
-    col += render(makePrimaryRay(vec2f(globalId.xy)), maxDist, maxRecursion);
+  for(var i=0u; i<u32(global.samplesPerPixel); i++) {
+    col += render(makePrimaryRay(vec2f(globalId.xy)), maxDist);
   }
 
-  buffer[u32(global.width) * globalId.y + globalId.x] = vec4f(pow(col / f32(samplesPerPixel), vec3f(0.4545)), 1);
+  // Accumulation buffer is linear
+  let index = u32(global.width) * globalId.y + globalId.x;
+  let outCol = mix(buffer[index].xyz, col / global.samplesPerPixel, global.weight);
+  buffer[index] = vec4f(outCol, 1);
+
+  // Current output is gamma corrected
+  image[index] = vec4f(pow(outCol, vec3f(0.4545)), 1);
 }
 
 @vertex
@@ -374,5 +375,5 @@ fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec
 @fragment
 fn fragmentMain(@builtin(position) pos: vec4f) -> @location(0) vec4f
 {
-  return buffer[u32(global.width) * u32(pos.y) + u32(pos.x)];
+  return image[u32(global.width) * u32(pos.y) + u32(pos.x)];
 }
