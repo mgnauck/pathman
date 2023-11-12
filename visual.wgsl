@@ -133,7 +133,7 @@ fn rand3Range(valueMin: f32, valueMax: f32) -> vec3f
 }
 
 // https://mathworld.wolfram.com/SpherePointPicking.html
-fn rand3OnUnit() -> vec3f
+fn rand3UnitSphere() -> vec3f
 {
   let u = 2 * rand() - 1;
   let theta = 2 * pi * rand();
@@ -143,7 +143,7 @@ fn rand3OnUnit() -> vec3f
 
 fn rand3Hemi(nrm: vec3f) -> vec3f
 {
-  let v = rand3OnUnit();
+  let v = rand3UnitSphere();
   return select(-v, v, dot(v, nrm) > 0);
 }
 
@@ -208,7 +208,7 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
 
 fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let dir = h.nrm + rand3OnUnit(); 
+  let dir = h.nrm + rand3UnitSphere(); 
   *out = Ray(h.pos, select(dir, h.nrm, all(abs(dir) < vec3f(epsilon))));
   *att = lambertMaterials[h.matId].albedo;
   return true;
@@ -218,7 +218,7 @@ fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<functi
 {
   let mat = &metalMaterials[h.matId];
   let dir = reflect(normalize(in.dir), h.nrm);
-  *out = Ray(h.pos, dir + (*mat).fuzzRadius * rand3OnUnit());
+  *out = Ray(h.pos, dir + (*mat).fuzzRadius * rand3UnitSphere());
   *att = (*mat).albedo;
   return dot((*out).dir, h.nrm) > 0;
 }
@@ -351,8 +351,9 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   
   initRand(globalId, vec3u(global.randSeed * 0xffffffff));
 
+  let spp = u32(gobal.samplesPerPixel);
   var col = vec3f(0);
-  for(var i=0u; i<u32(global.samplesPerPixel); i++) {
+  for(var i=0u; i<spp; i++) {
     col += render(makePrimaryRay(vec2f(globalId.xy)), maxDist);
   }
 

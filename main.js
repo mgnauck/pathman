@@ -1,12 +1,12 @@
 const FULLSCREEN = false;
 
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 1280;
+const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
-const MAX_RECURSION = 100;
+const MAX_RECURSION = 50;
 const SAMPLES_PER_PIXEL = 10;
-const TEMPORAL_RESIDUE = 0.5;
+const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
@@ -64,8 +64,8 @@ function vec3Normalize(v)
 
 function vec3FromSpherical(theta, phi)
 {
-  //return [Math.sin(theta) * Math.cos(phi), Math.sin(theta) * Math.sin(phi), Math.cos(theta)]; // Z up
-  return [Math.cos(theta) * Math.sin(phi), Math.sin(theta), Math.cos(theta) * Math.cos(phi)]; // Switching Z and Y
+  // Spherical coordinate axis flipped to accommodate X=right/Y=up
+  return [Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi)];
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -230,7 +230,7 @@ function calcView()
   up = vec3Cross(fwd, right);
 
   // Resets the accumulation buffer
-  gatheredSamples = TEMPORAL_RESIDUE * SAMPLES_PER_PIXEL;
+  gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
 }
 
 function resetView()
@@ -240,8 +240,8 @@ function resetView()
   focAngle = 0;
 
   eye = [0, 0, 2];
+  theta = 0.5 * Math.PI;
   phi = 0;
-  theta = 0;
 }
 
 function handleCameraKeyEvent(e)
@@ -281,10 +281,10 @@ function handleCameraKeyEvent(e)
 
 function handleCameraMouseMoveEvent(e)
 { 
+  theta = Math.min(Math.max(theta - e.movementY * LOOK_VELOCITY, 0.01), 0.99 * Math.PI);
+  
   phi = (phi - e.movementX * LOOK_VELOCITY) % (2 * Math.PI);
   phi += (phi < 0) ? 2.0 * Math.PI : 0;
-
-  theta = Math.min(Math.max(theta + e.movementY * LOOK_VELOCITY, -1.5), 1.5);
 
   calcView();
 }
