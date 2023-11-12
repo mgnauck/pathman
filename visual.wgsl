@@ -351,7 +351,7 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   
   initRand(globalId, vec3u(global.randSeed * 0xffffffff));
 
-  let spp = u32(gobal.samplesPerPixel);
+  let spp = u32(global.samplesPerPixel);
   var col = vec3f(0);
   for(var i=0u; i<spp; i++) {
     col += render(makePrimaryRay(vec2f(globalId.xy)), maxDist);

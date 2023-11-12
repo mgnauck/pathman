@@ -4,8 +4,8 @@ const ASPECT = 16.0 / 10.0;
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
-const MAX_RECURSION = 50;
-const SAMPLES_PER_PIXEL = 10;
+const MAX_RECURSION = 10;
+const SAMPLES_PER_PIXEL = 20;
 const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
@@ -220,7 +220,17 @@ function setPerformanceTimer()
 
 function update(time)
 {
-  // TODO
+  /*
+  let speed = 1.0;
+  let radius = 2;
+  let height = 0.5;
+  eye = [Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius];
+  fwd = vec3Normalize(eye);
+  right = vec3Cross([0, 1, 0], fwd);
+  up = vec3Cross(fwd, right);
+
+  gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
+  */
 }
 
 function calcView()
