@@ -32,6 +32,15 @@ struct Hit
   matId: u32
 }
 
+struct Plane
+{
+  // TODO
+  pos: vec3f,
+  nrm: vec3f,
+  matType: u32,
+  matId: u32
+}
+
 struct Sphere
 {
   center: vec3f,
@@ -64,9 +73,13 @@ struct GlassMaterial
   refractionIndex: f32
 }
 
-const epsilon = 0.001;
-const pi = 3.141592;
-const maxDist = 3.402823466e+38;
+const EPSILON = 0.001;
+const PI = 3.141592;
+const MAX_DIST = 3.402823466e+38;
+
+const MAT_TYPE_LAMBERT = 1;
+const MAT_TYPE_METAL = 2;
+const MAT_TYPE_GLASS = 3;
 
 const lambertMaterialCount = 2;
 var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
@@ -79,18 +92,19 @@ var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
   MetalMaterial(vec3f(0.3, 0.3, 0.6), 0.0)
 );
 
-const glassMaterialCount = 1;
+const glassMaterialCount = 2;
 var<private> glassMaterials = array<GlassMaterial, glassMaterialCount>(
-  GlassMaterial(vec3f(1.0), 1.5)
+  GlassMaterial(vec3f(1.0), 1.5),
+  GlassMaterial(vec3f(0.3, 0.3, 0.3), 1.5)
 );
 
 const sphereCount = 5;
 var<private> spheres = array<Sphere, sphereCount>(
-  Sphere(vec3f(0, -100.5, 0), 100, 0, 0),
-  Sphere(vec3f(-1, 0, 0), 0.5, 0, 1),
-  Sphere(vec3f(0, 0.0, 0), 0.5, 2, 0),
-  Sphere(vec3f(0, 0.0, 0), -0.35, 2, 0),
-  Sphere(vec3f(1, 0, 0), 0.5, 1, 0)
+  Sphere(vec3f(0, -100.5, 0), 100, MAT_TYPE_LAMBERT, 0),
+  Sphere(vec3f(-1, 0, 0), 0.5, MAT_TYPE_LAMBERT, 1),
+  Sphere(vec3f(0, 0, 0), 0.5, MAT_TYPE_GLASS, 0),
+  Sphere(vec3f(0, 0, 0), -0.45, MAT_TYPE_GLASS, 0),
+  Sphere(vec3f(1, 0, 0), 0.5, MAT_TYPE_METAL, 0)
 );
 
 @group(0) @binding(0) var<uniform> global: Uniforms;
@@ -136,7 +150,7 @@ fn rand3Range(valueMin: f32, valueMax: f32) -> vec3f
 fn rand3UnitSphere() -> vec3f
 {
   let u = 2 * rand() - 1;
-  let theta = 2 * pi * rand();
+  let theta = 2 * PI * rand();
   let r = sqrt(1 - u * u);
   return vec3f(r * cos(theta), r * sin(theta), u);
 }
@@ -160,10 +174,10 @@ fn rand2Disk() -> vec2f
   var r = 0.0;
   if(abs(uOffset.x) > abs(uOffset.y)) {
     r = uOffset.x;
-    theta = (pi / 4) * (uOffset.y / uOffset.x);
+    theta = (PI / 4) * (uOffset.y / uOffset.x);
   } else {
     r = uOffset.y;
-    theta = (pi / 2) - (pi / 4) * (uOffset.x / uOffset.y);
+    theta = (PI / 2) - (PI / 4) * (uOffset.x / uOffset.y);
   }
   
   return r * vec2f(cos(theta), sin(theta));
@@ -209,7 +223,7 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
 fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
   let dir = h.nrm + rand3UnitSphere(); 
-  *out = Ray(h.pos, select(dir, h.nrm, all(abs(dir) < vec3f(epsilon))));
+  *out = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON))));
   *att = lambertMaterials[h.matId].albedo;
   return true;
 }
@@ -260,13 +274,13 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
 {
   switch(h.matType)
   {
-    case 1: {
+    case MAT_TYPE_METAL: {
       return evalMaterialMetal(in, h, att, out);
     }
-    case 2: {
+    case MAT_TYPE_GLASS: {
       return evalMaterialGlass(in, h, att, out);
     }
-    default: {
+    default: { // MAT_TYPE_LAMBERT
       return evalMaterialLambert(in, h, att, out);
     }
   }
@@ -285,7 +299,7 @@ fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> b
   return currMinDist < tmax;
 }
 
-fn render(ray: Ray, maxDist: f32) -> vec3f
+fn render(ray: Ray, MAX_DIST: f32) -> vec3f
 {
   var h: Hit;
   var r = ray;
@@ -293,7 +307,7 @@ fn render(ray: Ray, maxDist: f32) -> vec3f
   var c = vec3f(1);
 
   loop {
-    if(intersectPrimitives(r, 0.001, maxDist, &h)) {
+    if(intersectPrimitives(r, 0.001, MAX_DIST, &h)) {
       var att: vec3f;
       var s: Ray;
       if(evalMaterial(r, h, &att, &s)) {
@@ -339,7 +353,7 @@ fn makePrimaryRay(pixelPos: vec2f) -> Ray
     originSample += focRadius * (diskSample.x * global.right + diskSample.y * global.up);
   }
 
-  return Ray(originSample, pixelSample - originSample);
+  return Ray(originSample, pixelSample - originSample); // normalize dir
 }
 
 @compute @workgroup_size(8,8)
@@ -354,7 +368,7 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   let spp = u32(global.samplesPerPixel);
   var col = vec3f(0);
   for(var i=0u; i<spp; i++) {
-    col += render(makePrimaryRay(vec2f(globalId.xy)), maxDist);
+    col += render(makePrimaryRay(vec2f(globalId.xy)), MAX_DIST);
   }
 
   // Accumulation buffer is linear
