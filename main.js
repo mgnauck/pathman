@@ -1,32 +1,48 @@
 const FULLSCREEN = false;
-
 const ASPECT = 16.0 / 10.0;
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
-
-const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 20;
-const TEMPORAL_WEIGHT = 0.1;
-
-const MOVE_VELOCITY = 0.05;
-const LOOK_VELOCITY = 0.025;
 
 let canvas;
 let context;
 let device;
 let uniformBuffer;
+let sceneBuffer;
 let bindGroup;
 let pipelineLayout;
 let computePipeline;
 let renderPipeline;
 let renderPassDescriptor;
+
+const MAX_RECURSION = 10;
+const SAMPLES_PER_PIXEL = 25;
+const TEMPORAL_WEIGHT = 0.1;
+
 let startTime;
+let gatheredSamples;
+
+const MOVE_VELOCITY = 0.05;
+const LOOK_VELOCITY = 0.025;
 
 let eye, right, up, fwd;
 let phi, theta;
 let vertFov, focDist, focAngle;
 
-let gatheredSamples;
+const OBJ_TYPE_PLANE = 1;
+const OBJ_TYPE_SPHERE = 2;
+const OBJ_TYPE_BOX = 3;
+const OBJ_TYPE_CYLINDER = 4;
+const OBJ_TYPE_MESH = 5;
+
+const MAT_TYPE_LAMBERT = 1;
+const MAT_TYPE_METAL = 2;
+const MAT_TYPE_GLASS = 3;
+
+let objectCount = 0;
+let objectOffset = 0;
+let objectData = [];
+let materialOffset = 0;
+let materialData = [];
 
 const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
 END_VISUAL_SHADER`;
@@ -66,6 +82,50 @@ function vec3FromSpherical(theta, phi)
 {
   // Spherical coordinate axis flipped to accommodate X=right/Y=up
   return [Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi)];
+}
+
+function addSphere(center, radius, materialOffset)
+{
+  objectData.push(OBJ_TYPE_SPHERE);
+  objectData.push(...center);
+  objectData.push(radius);
+  objectData.push(materialOffset);
+  objectCount++;
+}
+
+function addPlane(point, normal, materialOffset)
+{
+  objectData.push(OBJ_TYPE_PLANE);
+  objectData.push(...point);
+  objectData.push(...normal);
+  objectData.push(materialOffset);
+  objectCount++;
+}
+
+function addMaterial(materialType, albedo)
+{  
+  materialData.push(materialType);
+  materialData.push(...albedo);
+}
+
+function addLambert(albedo)
+{
+  addMaterial(MAT_TYPE_LAMBERT, albedo);
+  return materialData.length - 4;
+}
+
+function addMetal(albedo, fuzzRadius)
+{
+  addMaterial(MAT_TYPE_METAL, albedo);
+  materialData.push(fuzzRadius);
+  return materialData.length - 5;
+}
+
+function addGlass(albedo, refractionIndex)
+{
+  addMaterial(MAT_TYPE_GLASS, albedo);
+  materialData.push(refractionIndex);
+  return materialData.length - 5;
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -115,11 +175,16 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
   passEncoder.end();
 }
 
-async function createResources()
+async function createGpuResources(sceneDataSize)
 {
   uniformBuffer = device.createBuffer({
     size: 24 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+  });
+
+  sceneBuffer = device.createBuffer({
+    size: sceneDataSize * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
   let accumulationBuffer = device.createBuffer({
@@ -135,8 +200,9 @@ async function createResources()
   let bindGroupLayout = device.createBindGroupLayout({
     entries: [ 
       {binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}},
-      {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
-      {binding: 2, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
+      {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
+      {binding: 3, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
     ]
   });
 
@@ -144,8 +210,9 @@ async function createResources()
     layout: bindGroupLayout,
     entries: [
       {binding: 0, resource: {buffer: uniformBuffer}},
-      {binding: 1, resource: {buffer: accumulationBuffer}},
-      {binding: 2, resource: {buffer: imageBuffer}}
+      {binding: 1, resource: {buffer: sceneBuffer}},
+      {binding: 2, resource: {buffer: accumulationBuffer}},
+      {binding: 3, resource: {buffer: imageBuffer}}
     ]
   });
 
@@ -175,6 +242,13 @@ async function createPipelines()
 
   computePipeline = await createComputePipeline(shaderModule, pipelineLayout, "computeMain");
   renderPipeline = await createRenderPipeline(shaderModule, pipelineLayout, "vertexMain", "fragmentMain");
+}
+
+function copySceneData()
+{
+  device.queue.writeBuffer(sceneBuffer, 0, new Float32Array([objectCount, objectData.length]));
+  device.queue.writeBuffer(sceneBuffer, 2 * 4, new Float32Array([...objectData]));
+  device.queue.writeBuffer(sceneBuffer, (2 + objectData.length) * 4, new Float32Array([...materialData]));
 }
 
 function render(time)
@@ -344,6 +418,18 @@ async function startRender()
   requestAnimationFrame(render);
 }
 
+function createScene()
+{
+  addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
+  addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
+
+  let glassMatOfs = addGlass([1, 1, 1], 1.5);
+  addSphere([0, 0, 0], 0.5, glassMatOfs);
+  addSphere([0, 0, 0], -0.45, glassMatOfs);
+
+  addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
+}
+
 async function main()
 {
   if(!navigator.gpu)
@@ -357,7 +443,11 @@ async function main()
   if(!device)
     throw new Error("Failed to request logical device.");
 
-  await createResources();
+  createScene();
+  await createGpuResources(2 + objectData.length + materialData.length);
+  
+  copySceneData();
+  
   resetView();
   calcView();
 

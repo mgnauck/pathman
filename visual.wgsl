@@ -28,32 +28,21 @@ struct Hit
   pos: vec3f,
   nrm: vec3f,
   inside: bool,
-  matType: u32,
-  matId: u32
+  matOfs: u32
 }
 
 struct Plane
 {
-  // TODO
   pos: vec3f,
   nrm: vec3f,
-  matType: u32,
-  matId: u32
+  matOfs: u32
 }
 
 struct Sphere
 {
   center: vec3f,
   radius: f32,
-  matType: u32,
-  matId: u32
-}
-
-struct Box
-{
-  // TODO
-  matType: u32,
-  matId: u32
+  matOfs: u32
 }
 
 struct LambertMaterial
@@ -73,43 +62,31 @@ struct GlassMaterial
   refractionIndex: f32
 }
 
+struct Scene
+{
+  objectCount: f32,
+  materialsOffset: f32,
+  data: array<f32>
+}
+
 const EPSILON = 0.001;
 const PI = 3.141592;
 const MAX_DIST = 3.402823466e+38;
+
+const OBJ_TYPE_PLANE = 1;
+const OBJ_TYPE_SPHERE = 2;
+const OBJ_TYPE_BOX = 3;
+const OBJ_TYPE_CYLINDER = 4;
+const OBJ_TYPE_MESH = 5;
 
 const MAT_TYPE_LAMBERT = 1;
 const MAT_TYPE_METAL = 2;
 const MAT_TYPE_GLASS = 3;
 
-const lambertMaterialCount = 2;
-var<private> lambertMaterials = array<LambertMaterial, lambertMaterialCount>(
-  LambertMaterial(vec3f(0.5)),
-  LambertMaterial(vec3f(0.6, 0.3, 0.3))
-);
-
-const metalMaterialCount = 1;
-var<private> metalMaterials = array<MetalMaterial, metalMaterialCount>(
-  MetalMaterial(vec3f(0.3, 0.3, 0.6), 0.0)
-);
-
-const glassMaterialCount = 2;
-var<private> glassMaterials = array<GlassMaterial, glassMaterialCount>(
-  GlassMaterial(vec3f(1.0), 1.5),
-  GlassMaterial(vec3f(0.3, 0.3, 0.3), 1.5)
-);
-
-const sphereCount = 5;
-var<private> spheres = array<Sphere, sphereCount>(
-  Sphere(vec3f(0, -100.5, 0), 100, MAT_TYPE_LAMBERT, 0),
-  Sphere(vec3f(-1, 0, 0), 0.5, MAT_TYPE_LAMBERT, 1),
-  Sphere(vec3f(0, 0, 0), 0.5, MAT_TYPE_GLASS, 0),
-  Sphere(vec3f(0, 0, 0), -0.45, MAT_TYPE_GLASS, 0),
-  Sphere(vec3f(1, 0, 0), 0.5, MAT_TYPE_METAL, 0)
-);
-
 @group(0) @binding(0) var<uniform> global: Uniforms;
-@group(0) @binding(1) var<storage, read_write> buffer: array<vec4f>;
-@group(0) @binding(2) var<storage, read_write> image: array<vec4f>;
+@group(0) @binding(1) var<storage, read> scene: Scene;
+@group(0) @binding(2) var<storage, read_write> buffer: array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> image: array<vec4f>;
 
 var<private> seed: vec3u;
 
@@ -188,7 +165,7 @@ fn rayPos(r: Ray, t: f32) -> vec3f
   return r.ori + t * r.dir;
 }
 
-fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
+fn intersectSphere(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
 {
   let oc = r.ori - s.center;
   let a = dot(r.dir, r.dir);
@@ -211,29 +188,29 @@ fn intersect(s: Sphere, r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> 
 
   (*h).t = t;
   (*h).pos = r.ori + t * r.dir;
+
+  // TODO Calculate lazily
   (*h).nrm = ((*h).pos - s.center) / s.radius;
   (*h).inside = dot(r.dir, (*h).nrm) > 0;
   (*h).nrm *= select(1.0, -1.0, (*h).inside);
-  (*h).matType = s.matType;
-  (*h).matId = s.matId;
+  (*h).matOfs = s.matOfs;
 
   return true;
 }
 
-fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialLambert(in: Ray, h: Hit, mat: LambertMaterial, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
   let dir = h.nrm + rand3UnitSphere(); 
   *out = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON))));
-  *att = lambertMaterials[h.matId].albedo;
+  *att = mat.albedo;
   return true;
 }
 
-fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialMetal(in: Ray, h: Hit, mat: MetalMaterial, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let mat = &metalMaterials[h.matId];
   let dir = reflect(normalize(in.dir), h.nrm);
-  *out = Ray(h.pos, dir + (*mat).fuzzRadius * rand3UnitSphere());
-  *att = (*mat).albedo;
+  *out = Ray(h.pos, dir + mat.fuzzRadius * rand3UnitSphere());
+  *att = mat.albedo;
   return dot((*out).dir, h.nrm) > 0;
 }
 
@@ -244,10 +221,9 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
   return r0 + (1 - r0) * pow(1 - cosTheta, 5);
 }
 
-fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialGlass(in: Ray, h: Hit, mat: GlassMaterial, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let mat = &glassMaterials[h.matId];
-  let refracIndexRatio = select(1 / (*mat).refractionIndex, (*mat).refractionIndex, h.inside);
+  let refracIndexRatio = select(1 / mat.refractionIndex, mat.refractionIndex, h.inside);
   let inDir = normalize(in.dir);
   
   let cosTheta = min(dot(-inDir, h.nrm), 1);
@@ -266,34 +242,54 @@ fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<functi
   }
 
   *out = Ray(h.pos, dir);
-  *att = (*mat).albedo;
+  *att = mat.albedo;
   return true;
 }
 
 fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  switch(h.matType)
+  let matOfs = u32(scene.materialsOffset) + h.matOfs;
+  switch(u32(scene.data[matOfs]))
   {
+    case MAT_TYPE_LAMBERT, default: {
+      let mat = LambertMaterial(vec3f(scene.data[matOfs + 1], scene.data[matOfs + 2], scene.data[matOfs + 3]));
+      return evalMaterialLambert(in, h, mat, att, out);
+    }
     case MAT_TYPE_METAL: {
-      return evalMaterialMetal(in, h, att, out);
+      let mat = MetalMaterial(vec3f(scene.data[matOfs + 1], scene.data[matOfs + 2], scene.data[matOfs + 3]), scene.data[matOfs + 4]);
+      return evalMaterialMetal(in, h, mat, att, out);
     }
     case MAT_TYPE_GLASS: {
-      return evalMaterialGlass(in, h, att, out);
-    }
-    default: { // MAT_TYPE_LAMBERT
-      return evalMaterialLambert(in, h, att, out);
+      let mat = GlassMaterial(vec3f(scene.data[matOfs + 1], scene.data[matOfs + 2], scene.data[matOfs + 3]), scene.data[matOfs + 4]);
+      return evalMaterialGlass(in, h, mat, att, out);
     }
   }
 }
 
-fn intersectPrimitives(r: Ray, tmin: f32, tmax: f32, h: ptr<function, Hit>) -> bool
+fn intersect(ray: Ray, tmin: f32, tmax: f32, objOfs: ptr<function, u32>, hit: ptr<function, Hit>) -> bool
+{
+  switch(u32(scene.data[*objOfs]))
+  {
+    case OBJ_TYPE_SPHERE, default: {
+      let sphere = Sphere(vec3f(scene.data[*objOfs + 1], scene.data[*objOfs + 2], scene.data[*objOfs + 3]), scene.data[*objOfs + 4], u32(scene.data[*objOfs + 5]));
+      *objOfs += 6;
+      return intersectSphere(sphere, ray, tmin, tmax, hit);
+    }
+    case OBJ_TYPE_PLANE: {
+      return false;
+    }
+  }
+}
+
+fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
 {
   var currMinDist = tmax;
-  for(var i=0u; i<sphereCount; i++) {
+  var currObjOfs = 0u;
+  for(var i=0u; i<u32(scene.objectCount); i++) {
     var tempHit: Hit;
-    if(intersect(spheres[i], r, tmin, currMinDist, &tempHit)) {
+    if(intersect(ray, tmin, currMinDist, &currObjOfs, &tempHit)) {
       currMinDist = tempHit.t;
-      (*h) = tempHit;
+      (*hit) = tempHit;
     }
   }
   return currMinDist < tmax;
@@ -307,7 +303,7 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
   var c = vec3f(1);
 
   loop {
-    if(intersectPrimitives(r, 0.001, MAX_DIST, &h)) {
+    if(intersectScene(r, 0.001, MAX_DIST, &h)) {
       var att: vec3f;
       var s: Ray;
       if(evalMaterial(r, h, &att, &s)) {
