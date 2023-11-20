@@ -12,15 +12,16 @@ struct Global
   focDist: f32,
   up: vec3f,
   focAngle: f32,
-  fwd: vec3f,
+  fwd: vec3f, //
   time: f32
 }
 
-struct Scene
+struct Viewport
 {
-  objCnt: u32,
-  matArrOfs: u32,
-  arr: array<f32>
+  // TODO Merge with uniforms and calculate externally?
+  pixelDeltaX: vec3f,
+  pixelDeltaY: vec3f,
+  pixelTopLeft: vec3f
 }
 
 struct Ray
@@ -42,20 +43,21 @@ const EPSILON = 0.001;
 const PI = 3.141592;
 const MAX_DIST = 3.402823466e+38;
 
+const OBJ_TYPE_SPHERE = 0;
 const OBJ_TYPE_PLANE = 1;
-const OBJ_TYPE_SPHERE = 2;
-const OBJ_TYPE_BOX = 3;
-const OBJ_TYPE_CYLINDER = 4;
-const OBJ_TYPE_MESH = 5;
+const OBJ_TYPE_BOX = 2;
+const OBJ_TYPE_CYLINDER = 3;
+const OBJ_TYPE_MESH = 4;
 
-const MAT_TYPE_LAMBERT = 1;
-const MAT_TYPE_METAL = 2;
-const MAT_TYPE_GLASS = 3;
+const MAT_TYPE_LAMBERT = 0;
+const MAT_TYPE_METAL = 1;
+const MAT_TYPE_GLASS = 2;
 
 @group(0) @binding(0) var<uniform> global: Global;
-@group(0) @binding(1) var<storage, read> scene: Scene;
-@group(0) @binding(2) var<storage, read_write> buffer: array<vec4f>;
-@group(0) @binding(3) var<storage, read_write> image: array<vec4f>;
+@group(0) @binding(1) var<storage, read> objects: array<f32>;
+@group(0) @binding(2) var<storage, read> materials: array<f32>;
+@group(0) @binding(3) var<storage, read_write> buffer: array<vec4f>;
+@group(0) @binding(4) var<storage, read_write> image: array<vec4f>;
 
 var<private> seed: vec3u;
 
@@ -136,8 +138,8 @@ fn rayPos(r: Ray, dist: f32) -> vec3f
 
 fn intersectSphere(r: Ray, tmin: f32, tmax: f32, objOfs: u32, h: ptr<function, Hit>) -> bool
 {
-  let center = vec3f(scene.arr[objOfs + 1], scene.arr[objOfs + 2], scene.arr[objOfs + 3]);
-  let radius = scene.arr[objOfs + 4];
+  let center = vec3f(objects[objOfs + 1], objects[objOfs + 2], objects[objOfs + 3]);
+  let radius = objects[objOfs + 4];
 
   let oc = r.ori - center;
   let a = dot(r.dir, r.dir);
@@ -163,7 +165,7 @@ fn intersectSphere(r: Ray, tmin: f32, tmax: f32, objOfs: u32, h: ptr<function, H
   (*h).nrm = ((*h).pos - center) / radius;
   (*h).inside = dot(r.dir, (*h).nrm) > 0;
   (*h).nrm *= select(1.0, -1.0, (*h).inside);
-  (*h).matOfs = scene.matArrOfs + u32(scene.arr[objOfs + 5]);
+  (*h).matOfs = u32(objects[objOfs + 5]);
 
   return true;
 }
@@ -172,16 +174,16 @@ fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<func
 {
   let dir = h.nrm + rand3UnitSphere(); 
   *out = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON))));
-  *att = vec3f(scene.arr[h.matOfs + 1], scene.arr[h.matOfs + 2], scene.arr[h.matOfs + 3]);
+  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
   return true;
 }
 
 fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let fuzzRadius = scene.arr[h.matOfs + 4];
+  let fuzzRadius = materials[h.matOfs + 4];
   let dir = reflect(normalize(in.dir), h.nrm);
   *out = Ray(h.pos, dir + fuzzRadius * rand3UnitSphere());
-  *att = vec3f(scene.arr[h.matOfs + 1], scene.arr[h.matOfs + 2], scene.arr[h.matOfs + 3]);
+  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
   return dot((*out).dir, h.nrm) > 0;
 }
 
@@ -194,7 +196,7 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
 
 fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  let refractionIndex = scene.arr[h.matOfs + 4];
+  let refractionIndex = materials[h.matOfs + 4];
   let refracIndexRatio = select(1 / refractionIndex, refractionIndex, h.inside);
   let inDir = normalize(in.dir);
   
@@ -214,13 +216,13 @@ fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<functi
   }
 
   *out = Ray(h.pos, dir);
-  *att = vec3f(scene.arr[h.matOfs + 1], scene.arr[h.matOfs + 2], scene.arr[h.matOfs + 3]);
+  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
   return true;
 }
 
 fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
 {
-  switch(u32(scene.arr[h.matOfs]))
+  switch(u32(materials[h.matOfs]))
   {
     case MAT_TYPE_LAMBERT: { 
       return evalMaterialLambert(in, h, att, out);
@@ -237,38 +239,31 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
   }
 }
 
-fn intersect(ray: Ray, tmin: f32, tmax: f32, objOfs: ptr<function, u32>, hit: ptr<function, Hit>) -> bool
-{
-  //*objOfs += 6;
-  //return intersectSphere(ray, tmin, tmax, *objOfs - 6, hit);
- 
-  switch(u32(scene.arr[*objOfs]))
-  {
-    case OBJ_TYPE_SPHERE: { 
-      *objOfs += 6;
-      return intersectSphere(ray, tmin, tmax, *objOfs - 6, hit);
-    }
-    case OBJ_TYPE_PLANE: {
-      return false;
-    }
-    default: {
-      return false;
-    }
-  }
-}
-
 fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
 {
-  var currMinDist = tmax;
-  var currObjOfs = 0u;
-  for(var i=0u; i<scene.objCnt; i++) {
-    var tempHit: Hit;
-    if(intersect(ray, tmin, currMinDist, &currObjOfs, &tempHit)) {
-      currMinDist = tempHit.t;
-      (*hit) = tempHit;
+  var objOfs = 0u;
+  (*hit).t = tmax;
+
+  loop {  
+    switch(u32(objects[objOfs])) {
+      case OBJ_TYPE_SPHERE: {
+        intersectSphere(ray, tmin, (*hit).t, objOfs, hit);
+        objOfs += 6;
+      }
+      case OBJ_TYPE_PLANE: {
+        objOfs += 0;
+      }
+      default: {
+        // Error, jump beyond end of data
+        objOfs += 99999;
+      }
+    }
+    if(objOfs >= arrayLength(&objects)) {
+      break;
     }
   }
-  return currMinDist < tmax;
+
+  return (*hit).t < tmax;
 }
 
 fn sampleBackground(ray: Ray) -> vec3f
@@ -306,8 +301,10 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
   return col;
 }
 
-fn makePrimaryRay(pixelPos: vec2f) -> Ray
+fn createViewport() -> Viewport
 {
+  var v: Viewport;
+
   let width = f32(global.width);
   let height = f32(global.height);
 
@@ -317,14 +314,19 @@ fn makePrimaryRay(pixelPos: vec2f) -> Ray
   let viewportRight = global.right * viewportWidth; 
   let viewportDown = -global.up * viewportHeight;
 
-  let pixelDeltaX = viewportRight / width;
-  let pixelDeltaY = viewportDown / height;
+  v.pixelDeltaX = viewportRight / width;
+  v.pixelDeltaY = viewportDown / height;
 
   let viewportTopLeft = global.eye - global.focDist * global.fwd - 0.5 * (viewportRight + viewportDown);
-  let pixelTopLeft = viewportTopLeft + 0.5 * (pixelDeltaX + pixelDeltaY);
+  v.pixelTopLeft = viewportTopLeft + 0.5 * (v.pixelDeltaX + v.pixelDeltaY);
 
-  var pixelSample = pixelTopLeft + pixelDeltaX * pixelPos.x + pixelDeltaY * pixelPos.y;
-  pixelSample += (rand() - 0.5) * pixelDeltaX + (rand() - 0.5) * pixelDeltaY;
+  return v;
+}
+
+fn createPrimaryRay(v: Viewport, pixelPos: vec2f) -> Ray
+{
+  var pixelSample = v.pixelTopLeft + v.pixelDeltaX * pixelPos.x + v.pixelDeltaY * pixelPos.y;
+  pixelSample += (rand() - 0.5) * v.pixelDeltaX + (rand() - 0.5) * v.pixelDeltaY;
 
   var originSample = global.eye;
   if(global.focAngle > 0) {
@@ -333,7 +335,7 @@ fn makePrimaryRay(pixelPos: vec2f) -> Ray
     originSample += focRadius * (diskSample.x * global.right + diskSample.y * global.up);
   }
 
-  return Ray(originSample, pixelSample - originSample); // normalize dir
+  return Ray(originSample, normalize(pixelSample - originSample));
 }
 
 @compute @workgroup_size(8,8)
@@ -345,10 +347,11 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   
   initRand(globalId, vec3u(global.randSeed * 0xffffffff));
 
-  let spp = global.samplesPerPixel;
+  let viewport = createViewport();
+
   var col = vec3f(0);
-  for(var i=0u; i<spp; i++) {
-    col += render(makePrimaryRay(vec2f(globalId.xy)), MAX_DIST);
+  for(var i=0u; i<global.samplesPerPixel; i++) {
+    col += render(createPrimaryRay(viewport, vec2f(globalId.xy)), MAX_DIST);
   }
 
   let index = global.width * globalId.y + globalId.x;

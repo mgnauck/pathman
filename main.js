@@ -7,7 +7,8 @@ let canvas;
 let context;
 let device;
 let globalsBuffer;
-let sceneBuffer;
+let objectsBuffer;
+let materialsBuffer;
 let bindGroup;
 let pipelineLayout;
 let computePipeline;
@@ -15,7 +16,7 @@ let renderPipeline;
 let renderPassDescriptor;
 
 const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 25;
+const SAMPLES_PER_PIXEL = 20;
 const TEMPORAL_WEIGHT = 0.1;
 
 let startTime;
@@ -28,21 +29,18 @@ let eye, right, up, fwd;
 let phi, theta;
 let vertFov, focDist, focAngle;
 
+const OBJ_TYPE_SPHERE = 0;
 const OBJ_TYPE_PLANE = 1;
-const OBJ_TYPE_SPHERE = 2;
-const OBJ_TYPE_BOX = 3;
-const OBJ_TYPE_CYLINDER = 4;
-const OBJ_TYPE_MESH = 5;
+const OBJ_TYPE_BOX = 2;
+const OBJ_TYPE_CYLINDER = 3;
+const OBJ_TYPE_MESH = 4;
 
-const MAT_TYPE_LAMBERT = 1;
-const MAT_TYPE_METAL = 2;
-const MAT_TYPE_GLASS = 3;
+const MAT_TYPE_LAMBERT = 0;
+const MAT_TYPE_METAL = 1;
+const MAT_TYPE_GLASS = 2;
 
-let objectCount = 0;
-let objectOffset = 0;
-let objectData = [];
-let materialOffset = 0;
-let materialData = [];
+let objects = [];
+let materials = [];
 
 const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
 END_VISUAL_SHADER`;
@@ -86,46 +84,41 @@ function vec3FromSpherical(theta, phi)
 
 function addSphere(center, radius, materialOffset)
 {
-  objectData.push(OBJ_TYPE_SPHERE);
-  objectData.push(...center);
-  objectData.push(radius);
-  objectData.push(materialOffset);
-  objectCount++;
+  objects.push(OBJ_TYPE_SPHERE);
+  objects.push(...center);
+  objects.push(radius);
+  objects.push(materialOffset);
 }
 
 function addPlane(point, normal, materialOffset)
 {
-  objectData.push(OBJ_TYPE_PLANE);
-  objectData.push(...point);
-  objectData.push(...normal);
-  objectData.push(materialOffset);
-  objectCount++;
-}
-
-function addMaterial(materialType, albedo)
-{  
-  materialData.push(materialType);
-  materialData.push(...albedo);
+  objects.push(OBJ_TYPE_PLANE);
+  objects.push(...point);
+  objects.push(...normal);
+  objects.push(materialOffset);
 }
 
 function addLambert(albedo)
 {
-  addMaterial(MAT_TYPE_LAMBERT, albedo);
-  return materialData.length - 4;
+  materials.push(MAT_TYPE_LAMBERT);
+  materials.push(...albedo);
+  return materials.length - 4;
 }
 
 function addMetal(albedo, fuzzRadius)
 {
-  addMaterial(MAT_TYPE_METAL, albedo);
-  materialData.push(fuzzRadius);
-  return materialData.length - 5;
+  materials.push(MAT_TYPE_METAL);
+  materials.push(...albedo);
+  materials.push(fuzzRadius);
+  return materials.length - 5;
 }
 
 function addGlass(albedo, refractionIndex)
 {
-  addMaterial(MAT_TYPE_GLASS, albedo);
-  materialData.push(refractionIndex);
-  return materialData.length - 5;
+  materials.push(MAT_TYPE_GLASS);
+  materials.push(...albedo);
+  materials.push(refractionIndex);
+  return materials.length - 5;
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -175,15 +168,20 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
   passEncoder.end();
 }
 
-async function createGpuResources(sceneDataSize)
+async function createGpuResources(objectsSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
     size: 24 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
-  sceneBuffer = device.createBuffer({
-    size: sceneDataSize * 4,
+  objectsBuffer = device.createBuffer({
+    size: objectsSize * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+
+  materialsBuffer = device.createBuffer({
+    size: materialsSize * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
@@ -201,8 +199,9 @@ async function createGpuResources(sceneDataSize)
     entries: [ 
       {binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}},
       {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
-      {binding: 3, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
+      {binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
+      {binding: 4, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
     ]
   });
 
@@ -210,9 +209,10 @@ async function createGpuResources(sceneDataSize)
     layout: bindGroupLayout,
     entries: [
       {binding: 0, resource: {buffer: globalsBuffer}},
-      {binding: 1, resource: {buffer: sceneBuffer}},
-      {binding: 2, resource: {buffer: accumulationBuffer}},
-      {binding: 3, resource: {buffer: imageBuffer}}
+      {binding: 1, resource: {buffer: objectsBuffer}},
+      {binding: 2, resource: {buffer: materialsBuffer}},
+      {binding: 3, resource: {buffer: accumulationBuffer}},
+      {binding: 4, resource: {buffer: imageBuffer}}
     ]
   });
 
@@ -246,9 +246,8 @@ async function createPipelines()
 
 function copySceneData()
 {
-  device.queue.writeBuffer(sceneBuffer, 0, new Uint32Array([objectCount, objectData.length]));
-  device.queue.writeBuffer(sceneBuffer, 2 * 4, new Float32Array([...objectData]));
-  device.queue.writeBuffer(sceneBuffer, (2 + objectData.length) * 4, new Float32Array([...materialData]));
+  device.queue.writeBuffer(objectsBuffer, 0, new Float32Array([...objects]));
+  device.queue.writeBuffer(materialsBuffer, 0, new Float32Array([...materials]));
 }
 
 function render(time)
@@ -305,7 +304,7 @@ function update(time)
   up = vec3Cross(fwd, right);
 
   gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
-  */
+  //*/
 }
 
 function calcView()
@@ -445,8 +444,7 @@ async function main()
     throw new Error("Failed to request logical device.");
 
   createScene();
-  await createGpuResources(2 + objectData.length + materialData.length);
-  
+  await createGpuResources(objects.length, materials.length); 
   copySceneData();
   
   resetView();
