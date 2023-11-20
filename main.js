@@ -6,7 +6,7 @@ const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 let canvas;
 let context;
 let device;
-let uniformBuffer;
+let globalsBuffer;
 let sceneBuffer;
 let bindGroup;
 let pipelineLayout;
@@ -177,7 +177,7 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
 
 async function createGpuResources(sceneDataSize)
 {
-  uniformBuffer = device.createBuffer({
+  globalsBuffer = device.createBuffer({
     size: 24 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
@@ -209,7 +209,7 @@ async function createGpuResources(sceneDataSize)
   bindGroup = device.createBindGroup({
     layout: bindGroupLayout,
     entries: [
-      {binding: 0, resource: {buffer: uniformBuffer}},
+      {binding: 0, resource: {buffer: globalsBuffer}},
       {binding: 1, resource: {buffer: sceneBuffer}},
       {binding: 2, resource: {buffer: accumulationBuffer}},
       {binding: 3, resource: {buffer: imageBuffer}}
@@ -246,7 +246,7 @@ async function createPipelines()
 
 function copySceneData()
 {
-  device.queue.writeBuffer(sceneBuffer, 0, new Float32Array([objectCount, objectData.length]));
+  device.queue.writeBuffer(sceneBuffer, 0, new Uint32Array([objectCount, objectData.length]));
   device.queue.writeBuffer(sceneBuffer, 2 * 4, new Float32Array([...objectData]));
   device.queue.writeBuffer(sceneBuffer, (2 + objectData.length) * 4, new Float32Array([...materialData]));
 }
@@ -261,8 +261,9 @@ function render(time)
 
   update(time);
 
-  device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([
-    CANVAS_WIDTH, CANVAS_HEIGHT, SAMPLES_PER_PIXEL, MAX_RECURSION,
+  device.queue.writeBuffer(globalsBuffer, 0, new Uint32Array([
+    CANVAS_WIDTH, CANVAS_HEIGHT, SAMPLES_PER_PIXEL, MAX_RECURSION]));
+  device.queue.writeBuffer(globalsBuffer, 16, new Float32Array([
     Math.random(), Math.random(), Math.random(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL),
     ...eye, vertFov,
     ...right, focDist,
