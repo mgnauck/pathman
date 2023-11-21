@@ -25,9 +25,10 @@ let gatheredSamples;
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
-let eye, right, up, fwd;
 let phi, theta;
+let eye, right, up, fwd;
 let vertFov, focDist, focAngle;
+let pixelDeltaX, pixelDeltaY, pixelTopLeft;
 
 const OBJ_TYPE_SPHERE = 0;
 const OBJ_TYPE_PLANE = 1;
@@ -171,7 +172,7 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
 async function createGpuResources(objectsSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
-    size: 24 * 4,
+    size: 36 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -250,6 +251,29 @@ function copySceneData()
   device.queue.writeBuffer(materialsBuffer, 0, new Float32Array([...materials]));
 }
 
+function copyCanvasData()
+{
+  device.queue.writeBuffer(globalsBuffer, 0, new Uint32Array([
+    CANVAS_WIDTH, CANVAS_HEIGHT, SAMPLES_PER_PIXEL, MAX_RECURSION]));
+}
+
+function copyViewData()
+{
+  device.queue.writeBuffer(globalsBuffer, 12 * 4, new Float32Array([
+    ...eye, vertFov,
+    ...right, focDist,
+    ...up, focAngle,
+    ...pixelDeltaX, 0 /* pad */,
+    ...pixelDeltaY, 0 /* pad */,
+    ...pixelTopLeft, 0 /* pad */]));
+}
+
+function copyFrameData(time)
+{
+  device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array([
+    Math.random(), Math.random(), Math.random(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* padding */ 0, 0, 0])); 
+}
+
 function render(time)
 {  
   if(startTime === undefined)
@@ -260,15 +284,8 @@ function render(time)
 
   update(time);
 
-  device.queue.writeBuffer(globalsBuffer, 0, new Uint32Array([
-    CANVAS_WIDTH, CANVAS_HEIGHT, SAMPLES_PER_PIXEL, MAX_RECURSION]));
-  device.queue.writeBuffer(globalsBuffer, 16, new Float32Array([
-    Math.random(), Math.random(), Math.random(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL),
-    ...eye, vertFov,
-    ...right, focDist,
-    ...up, focAngle,
-    ...fwd, time]));
-  
+  copyFrameData(time);
+ 
   let commandEncoder = device.createCommandEncoder();
   encodeComputePassAndSubmit(commandEncoder, computePipeline, bindGroup, Math.ceil(CANVAS_WIDTH / 8), Math.ceil(CANVAS_HEIGHT / 8), 1);
   encodeRenderPassAndSubmit(commandEncoder, renderPipeline, bindGroup, context.getCurrentTexture().createView());
@@ -309,9 +326,28 @@ function update(time)
 
 function calcView()
 {
+  // Camera basis
   fwd = vec3FromSpherical(theta, phi);
   right = vec3Cross([0, 1, 0], fwd);
   up = vec3Cross(fwd, right);
+
+  // Viewport
+  let viewportHeight = 2 * Math.tan(0.5 * vertFov * Math.PI / 180) * focDist;
+  let viewportWidth = viewportHeight * CANVAS_WIDTH / CANVAS_HEIGHT;
+
+  let viewportRight = vec3Scale(right, viewportWidth);
+  let viewportDown = vec3Scale(up, -viewportHeight);
+
+  pixelDeltaX = vec3Scale(viewportRight, 1 / CANVAS_WIDTH);
+  pixelDeltaY = vec3Scale(viewportDown, 1 / CANVAS_HEIGHT);
+
+  // viewportTopLeft = global.eye - global.focDist * global.fwd - 0.5 * (viewportRight + viewportDown);
+  let viewportTopLeft = vec3Add(eye, vec3Add(vec3Negate(vec3Scale(fwd, focDist)), vec3Negate(vec3Scale(vec3Add(viewportRight, viewportDown), 0.5))));
+
+  // pixelTopLeft = viewportTopLeft + 0.5 * (v.pixelDeltaX + v.pixelDeltaY)
+  pixelTopLeft = vec3Add(viewportTopLeft, vec3Scale(vec3Add(pixelDeltaX, pixelDeltaY), 0.5));
+
+  copyViewData();
 
   // Resets the accumulation buffer
   gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
@@ -444,9 +480,11 @@ async function main()
     throw new Error("Failed to request logical device.");
 
   createScene();
-  await createGpuResources(objects.length, materials.length); 
+  await createGpuResources(objects.length, materials.length);
+
+  copyCanvasData();
   copySceneData();
-  
+
   resetView();
   calcView();
 

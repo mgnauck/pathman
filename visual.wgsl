@@ -6,22 +6,22 @@ struct Global
   maxRecursion: u32,
   randSeed: vec3f,
   weight: f32,
+  time: f32,
+  pad1: f32,
+  pad2: f32,
+  pad3: f32,
   eye: vec3f,
   vertFov: f32,
   right: vec3f,
   focDist: f32,
   up: vec3f,
   focAngle: f32,
-  fwd: vec3f, //
-  time: f32
-}
-
-struct Viewport
-{
-  // TODO Merge with uniforms and calculate externally?
   pixelDeltaX: vec3f,
+  pad4: f32,
   pixelDeltaY: vec3f,
-  pixelTopLeft: vec3f
+  pad5: f32,
+  pixelTopLeft: vec3f,
+  pad6: f32
 }
 
 struct Ray
@@ -32,7 +32,7 @@ struct Ray
 
 struct Hit
 {
-  t: f32,
+  dist: f32,
   pos: vec3f,
   nrm: vec3f,
   inside: bool,
@@ -53,7 +53,7 @@ const MAT_TYPE_LAMBERT = 0;
 const MAT_TYPE_METAL = 1;
 const MAT_TYPE_GLASS = 2;
 
-@group(0) @binding(0) var<uniform> global: Global;
+@group(0) @binding(0) var<uniform> globals: Global;
 @group(0) @binding(1) var<storage, read> objects: array<f32>;
 @group(0) @binding(2) var<storage, read> materials: array<f32>;
 @group(0) @binding(3) var<storage, read_write> buffer: array<vec4f>;
@@ -160,7 +160,7 @@ fn intersectSphere(r: Ray, tmin: f32, tmax: f32, objOfs: u32, h: ptr<function, H
     }
   }
 
-  (*h).t = t;
+  (*h).dist = t;
   (*h).pos = rayPos(r, t);
   (*h).nrm = ((*h).pos - center) / radius;
   (*h).inside = dot(r.dir, (*h).nrm) > 0;
@@ -234,6 +234,7 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
       return evalMaterialGlass(in, h, att, out);
     }
     default: {
+      // TODO How to indicate an error?
       return false;
     }
   }
@@ -242,19 +243,19 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
 fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
 {
   var objOfs = 0u;
-  (*hit).t = tmax;
+  (*hit).dist = tmax;
 
   loop {  
     switch(u32(objects[objOfs])) {
       case OBJ_TYPE_SPHERE: {
-        intersectSphere(ray, tmin, (*hit).t, objOfs, hit);
+        intersectSphere(ray, tmin, (*hit).dist, objOfs, hit);
         objOfs += 6;
       }
       case OBJ_TYPE_PLANE: {
         objOfs += 0;
       }
       default: {
-        // Error, jump beyond end of data
+        // Jump beyond end of data on error
         objOfs += 99999;
       }
     }
@@ -263,7 +264,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
     }
   }
 
-  return (*hit).t < tmax;
+  return (*hit).dist < tmax;
 }
 
 fn sampleBackground(ray: Ray) -> vec3f
@@ -293,7 +294,7 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
     }
 
     depth += 1;
-    if(depth >= global.maxRecursion) {
+    if(depth >= globals.maxRecursion) {
       break;
     }
   }
@@ -301,61 +302,37 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
   return col;
 }
 
-fn createViewport() -> Viewport
+fn createPrimaryRay(pixelPos: vec2f) -> Ray
 {
-  var v: Viewport;
+  var pixelSample = globals.pixelTopLeft + globals.pixelDeltaX * pixelPos.x + globals.pixelDeltaY * pixelPos.y;
+  pixelSample += (rand() - 0.5) * globals.pixelDeltaX + (rand() - 0.5) * globals.pixelDeltaY;
 
-  let width = f32(global.width);
-  let height = f32(global.height);
-
-  let viewportHeight = 2 * tan(radians(0.5 * global.vertFov)) * global.focDist;
-  let viewportWidth = viewportHeight * width / height;
-
-  let viewportRight = global.right * viewportWidth; 
-  let viewportDown = -global.up * viewportHeight;
-
-  v.pixelDeltaX = viewportRight / width;
-  v.pixelDeltaY = viewportDown / height;
-
-  let viewportTopLeft = global.eye - global.focDist * global.fwd - 0.5 * (viewportRight + viewportDown);
-  v.pixelTopLeft = viewportTopLeft + 0.5 * (v.pixelDeltaX + v.pixelDeltaY);
-
-  return v;
-}
-
-fn createPrimaryRay(v: Viewport, pixelPos: vec2f) -> Ray
-{
-  var pixelSample = v.pixelTopLeft + v.pixelDeltaX * pixelPos.x + v.pixelDeltaY * pixelPos.y;
-  pixelSample += (rand() - 0.5) * v.pixelDeltaX + (rand() - 0.5) * v.pixelDeltaY;
-
-  var originSample = global.eye;
-  if(global.focAngle > 0) {
-    let focRadius = global.focDist * tan(0.5 * radians(global.focAngle));
+  var eyeSample = globals.eye;
+  if(globals.focAngle > 0) {
+    let focRadius = globals.focDist * tan(0.5 * radians(globals.focAngle));
     let diskSample = rand2Disk();
-    originSample += focRadius * (diskSample.x * global.right + diskSample.y * global.up);
+    eyeSample += focRadius * (diskSample.x * globals.right + diskSample.y * globals.up);
   }
 
-  return Ray(originSample, normalize(pixelSample - originSample));
+  return Ray(eyeSample, normalize(pixelSample - eyeSample));
 }
 
 @compute @workgroup_size(8,8)
 fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 {
-  if(all(globalId.xy >= vec2u(global.width, global.height))) {
+  if(all(globalId.xy >= vec2u(globals.width, globals.height))) {
     return;
   }
   
-  initRand(globalId, vec3u(global.randSeed * 0xffffffff));
-
-  let viewport = createViewport();
+  initRand(globalId, vec3u(globals.randSeed * 0xffffffff));
 
   var col = vec3f(0);
-  for(var i=0u; i<global.samplesPerPixel; i++) {
-    col += render(createPrimaryRay(viewport, vec2f(globalId.xy)), MAX_DIST);
+  for(var i=0u; i<globals.samplesPerPixel; i++) {
+    col += render(createPrimaryRay(vec2f(globalId.xy)), MAX_DIST);
   }
 
-  let index = global.width * globalId.y + globalId.x;
-  let outCol = mix(buffer[index].xyz, col / f32(global.samplesPerPixel), global.weight);
+  let index = globals.width * globalId.y + globalId.x;
+  let outCol = mix(buffer[index].xyz, col / f32(globals.samplesPerPixel), globals.weight);
 
   buffer[index] = vec4f(outCol, 1);
   image[index] = vec4f(pow(outCol, vec3f(0.4545)), 1);
@@ -371,5 +348,5 @@ fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec
 @fragment
 fn fragmentMain(@builtin(position) pos: vec4f) -> @location(0) vec4f
 {
-  return image[u32(global.width) * u32(pos.y) + u32(pos.x)];
+  return image[globals.width * u32(pos.y) + u32(pos.x)];
 }
