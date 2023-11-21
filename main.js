@@ -1,7 +1,29 @@
 const FULLSCREEN = false;
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 1024;
+const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
+
+const MAX_RECURSION = 10;
+const SAMPLES_PER_PIXEL = 1;
+const TEMPORAL_WEIGHT = 0;
+
+const ORBIT_CAM = false;
+
+const MOVE_VELOCITY = 0.05;
+const LOOK_VELOCITY = 0.025;
+
+const OBJ_TYPE_SPHERE = 0;
+const OBJ_TYPE_PLANE = 1;
+const OBJ_TYPE_BOX = 2;
+const OBJ_TYPE_CYLINDER = 3;
+const OBJ_TYPE_MESH = 4;
+
+const MAT_TYPE_LAMBERT = 0;
+const MAT_TYPE_METAL = 1;
+const MAT_TYPE_GLASS = 2;
+
+const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
+END_VISUAL_SHADER`;
 
 let canvas;
 let context;
@@ -15,45 +37,50 @@ let computePipeline;
 let renderPipeline;
 let renderPassDescriptor;
 
-const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 20;
-const TEMPORAL_WEIGHT = 0.1;
-
 let startTime;
 let gatheredSamples;
-
-const MOVE_VELOCITY = 0.05;
-const LOOK_VELOCITY = 0.025;
 
 let phi, theta;
 let eye, right, up, fwd;
 let vertFov, focDist, focAngle;
 let pixelDeltaX, pixelDeltaY, pixelTopLeft;
 
-const OBJ_TYPE_SPHERE = 0;
-const OBJ_TYPE_PLANE = 1;
-const OBJ_TYPE_BOX = 2;
-const OBJ_TYPE_CYLINDER = 3;
-const OBJ_TYPE_MESH = 4;
-
-const MAT_TYPE_LAMBERT = 0;
-const MAT_TYPE_METAL = 1;
-const MAT_TYPE_GLASS = 2;
-
 let objects = [];
 let materials = [];
-
-const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
-END_VISUAL_SHADER`;
 
 function loadTextFile(url)
 {
   return fetch(url).then(response => response.text());
 }
 
+function rand()
+{
+  return Math.random();
+}
+
+function randRange(min, max)
+{
+  return min + rand() * (max - min);
+}
+
+function vec3Rand()
+{
+  return[rand(), rand(), rand()];
+}
+
+function vec3RandRange(min, max)
+{
+  return [randRange(min, max), randRange(min, max), randRange(min, max)];
+}
+
 function vec3Add(a, b)
 {
   return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function vec3Mul(a, b)
+{
+  return [a[0] * b[0], a[1] * b[1], a[2] * b[2]];
 }
 
 function vec3Negate(v)
@@ -75,6 +102,11 @@ function vec3Normalize(v)
 {
   let invLen = 1.0 / Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
   return [v[0] * invLen, v[1] * invLen, v[2] * invLen];
+}
+
+function vec3Length(v)
+{
+  return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
 }
 
 function vec3FromSpherical(theta, phi)
@@ -271,7 +303,7 @@ function copyViewData()
 function copyFrameData(time)
 {
   device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array([
-    Math.random(), Math.random(), Math.random(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* padding */ 0, 0, 0])); 
+    rand(), rand(), rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* padding */ 0, 0, 0])); 
 }
 
 function render(time)
@@ -309,25 +341,24 @@ function setPerformanceTimer()
     });
 }
 
-function update(time)
+function resetAccumulationBuffer()
 {
-  /*
-  let speed = 1.0;
-  let radius = 2;
-  let height = 0.5;
-  eye = [Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius];
-  fwd = vec3Normalize(eye);
-  right = vec3Cross([0, 1, 0], fwd);
-  up = vec3Cross(fwd, right);
-
   gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
-  //*/
 }
 
-function calcView()
+function update(time)
+{
+  if(ORBIT_CAM) {
+    let speed = 0.3;
+    let radius = 15;
+    let height = 2.5;
+    setView([Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius], vec3Normalize(eye));
+  }
+}
+
+function updateView()
 {
   // Camera basis
-  fwd = vec3FromSpherical(theta, phi);
   right = vec3Cross([0, 1, 0], fwd);
   up = vec3Cross(fwd, right);
 
@@ -345,12 +376,20 @@ function calcView()
   let viewportTopLeft = vec3Add(eye, vec3Add(vec3Negate(vec3Scale(fwd, focDist)), vec3Negate(vec3Scale(vec3Add(viewportRight, viewportDown), 0.5))));
 
   // pixelTopLeft = viewportTopLeft + 0.5 * (v.pixelDeltaX + v.pixelDeltaY)
-  pixelTopLeft = vec3Add(viewportTopLeft, vec3Scale(vec3Add(pixelDeltaX, pixelDeltaY), 0.5));
+  pixelTopLeft = vec3Add(viewportTopLeft, vec3Scale(vec3Add(pixelDeltaX, pixelDeltaY), 0.5)); 
 
   copyViewData();
+  resetAccumulationBuffer();
+}
 
-  // Resets the accumulation buffer
-  gatheredSamples = TEMPORAL_WEIGHT * SAMPLES_PER_PIXEL;
+function setView(lookFrom, lookAt)
+{
+  eye = lookFrom;
+  fwd = vec3Normalize(vec3Add(lookFrom, vec3Negate(lookAt)));
+
+  // TODO Recalc theta and phi from fwd
+  
+  updateView();
 }
 
 function resetView()
@@ -360,6 +399,7 @@ function resetView()
   focAngle = 0;
 
   eye = [0, 0, 2];
+  fwd = [0, 0, 1];
   theta = 0.5 * Math.PI;
   phi = 0;
 }
@@ -396,7 +436,7 @@ function handleCameraKeyEvent(e)
       break;
   }
 
-  calcView();
+  updateView();
 }
 
 function handleCameraMouseMoveEvent(e)
@@ -406,7 +446,9 @@ function handleCameraMouseMoveEvent(e)
   phi = (phi - e.movementX * LOOK_VELOCITY) % (2 * Math.PI);
   phi += (phi < 0) ? 2.0 * Math.PI : 0;
 
-  calcView();
+  fwd = vec3FromSpherical(theta, phi);
+
+  updateView();
 }
 
 async function handleKeyEvent(e)
@@ -414,7 +456,7 @@ async function handleKeyEvent(e)
   switch (e.key) {
     case "l":
       createPipelines();
-      calcView();
+      updateView();
       console.log("Visual shader reloaded");
       break;
   }
@@ -456,6 +498,7 @@ async function startRender()
 
 function createScene()
 {
+  /*
   addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
   addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
 
@@ -464,6 +507,32 @@ function createScene()
   addSphere([0, 0, 0], -0.45, glassMatOfs);
 
   addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
+  //*/
+
+  // RIOW scene
+  addSphere([0, -1000, 0], 1000, addLambert([0.5, 0.5, 0.5]));
+
+  for(a=-11; a<11; a++) {
+    for(b=-11; b<11; b++) {
+      let chooseMat = rand();
+      let center = [a + 0.9 * rand(), 0.2, b + 0.9 * rand()];
+      if(vec3Length(vec3Add(center, [-4, -0.2, 0])) > 0.9) {
+        let mat;
+        if(chooseMat < 0.8)
+          mat = addLambert(vec3Mul(vec3Rand(), vec3Rand()));
+        else if(chooseMat < 0.95)
+          mat = addMetal(vec3RandRange(0.5, 1), randRange(0, 0.5));
+        else
+          mat = addGlass([1, 1, 1], 1.5);
+        addSphere(center, 0.2, mat);
+      }
+    }
+  }
+
+  addSphere([0, 1, 0], 1, addGlass([1, 1, 1], 1.5));
+  addSphere([-4, 1, 0], 1, addLambert([0.4, 0.2, 0.1]));
+  addSphere([4, 1, 0], 1, addMetal([0.7, 0.6, 0.5], 0));
+  //*/
 }
 
 async function main()
@@ -486,7 +555,12 @@ async function main()
   copySceneData();
 
   resetView();
-  calcView();
+  updateView();
+
+  vertFov = 20;
+  focDist = 10;
+  focAngle = 0.6;
+  setView([13, 2, 3], [0, 0, 0]);
 
   document.body.innerHTML = "<button>CLICK<canvas style='width:0;cursor:none'>";
   canvas = document.querySelector("canvas");
