@@ -7,8 +7,6 @@ const MAX_RECURSION = 10;
 const SAMPLES_PER_PIXEL = 1;
 const TEMPORAL_WEIGHT = 0;
 
-const ORBIT_CAM = false;
-
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
@@ -47,6 +45,8 @@ let pixelDeltaX, pixelDeltaY, pixelTopLeft;
 
 let objects = [];
 let materials = [];
+
+let orbitCam = false;
 
 function loadTextFile(url)
 {
@@ -348,7 +348,7 @@ function resetAccumulationBuffer()
 
 function update(time)
 {
-  if(ORBIT_CAM) {
+  if(orbitCam) {
     let speed = 0.3;
     let radius = 15;
     let height = 2.5;
@@ -387,21 +387,29 @@ function setView(lookFrom, lookAt)
   eye = lookFrom;
   fwd = vec3Normalize(vec3Add(lookFrom, vec3Negate(lookAt)));
 
-  // TODO Recalc theta and phi from fwd
-  
+  theta = Math.acos(fwd[1]);
+  phi = Math.acos(fwd[2] / Math.sqrt(fwd[0] * fwd[0] + fwd[2] * fwd[2]));
+
   updateView();
 }
 
 function resetView()
 {
+  // Defaults test scene 1
+  //*
   vertFov = 60;
   focDist = 3;
   focAngle = 0;
+  setView([0, 0, 2], [0, 0, 0]);
+  //*/
 
-  eye = [0, 0, 2];
-  fwd = [0, 0, 1];
-  theta = 0.5 * Math.PI;
-  phi = 0;
+  /*
+  // Defaults test scene RIOW
+  vertFov = 20;
+  focDist = 10;
+  focAngle = 0.6;
+  setView([13, 2, 3], [0, 0, 0]);
+  //*/
 }
 
 function handleCameraKeyEvent(e)
@@ -433,6 +441,9 @@ function handleCameraKeyEvent(e)
       break;
     case "r":
       resetView();
+      break;
+    case "o":
+      orbitCam = !orbitCam;
       break;
   }
 
@@ -498,7 +509,8 @@ async function startRender()
 
 function createScene()
 {
-  /*
+  //*
+  // Test scene 1
   addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
   addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
 
@@ -509,7 +521,8 @@ function createScene()
   addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
   //*/
 
-  // RIOW scene
+  /*
+  // Test scene RIOW
   addSphere([0, -1000, 0], 1000, addLambert([0.5, 0.5, 0.5]));
 
   for(a=-11; a<11; a++) {
@@ -556,11 +569,6 @@ async function main()
 
   resetView();
   updateView();
-
-  vertFov = 20;
-  focDist = 10;
-  focAngle = 0.6;
-  setView([13, 2, 3], [0, 0, 0]);
 
   document.body.innerHTML = "<button>CLICK<canvas style='width:0;cursor:none'>";
   canvas = document.querySelector("canvas");
