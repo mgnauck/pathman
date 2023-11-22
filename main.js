@@ -3,6 +3,9 @@ const ASPECT = 16.0 / 10.0;
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
+const ACTIVE_SCENE = "RIOW";
+//const ACTIVE_SCENE = "TEST";
+
 const MAX_RECURSION = 10;
 const SAMPLES_PER_PIXEL = 1;
 const TEMPORAL_WEIGHT = 0;
@@ -48,14 +51,22 @@ let materials = [];
 
 let orbitCam = false;
 
+let rand = xorshift32(471849323);
+
 function loadTextFile(url)
 {
   return fetch(url).then(response => response.text());
 }
 
-function rand()
+function xorshift32(a)
 {
-  return Math.random();
+  return function()
+  {
+    a ^= a << 13;
+    a ^= a >>> 17;
+    a ^= a << 5;
+    return (a >>> 0) / 4294967296;
+  }
 }
 
 function randRange(min, max)
@@ -303,7 +314,7 @@ function copyViewData()
 function copyFrameData(time)
 {
   device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array([
-    rand(), rand(), rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* padding */ 0, 0, 0])); 
+    rand(), rand(), rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* pad */ 0, 0, 0])); 
 }
 
 function render(time)
@@ -358,11 +369,9 @@ function update(time)
 
 function updateView()
 {
-  // Camera basis
   right = vec3Cross([0, 1, 0], fwd);
   up = vec3Cross(fwd, right);
 
-  // Viewport
   let viewportHeight = 2 * Math.tan(0.5 * vertFov * Math.PI / 180) * focDist;
   let viewportWidth = viewportHeight * CANVAS_WIDTH / CANVAS_HEIGHT;
 
@@ -395,21 +404,19 @@ function setView(lookFrom, lookAt)
 
 function resetView()
 {
-  // Defaults test scene 1
-  //*
-  vertFov = 60;
-  focDist = 3;
-  focAngle = 0;
-  setView([0, 0, 2], [0, 0, 0]);
-  //*/
+  if(ACTIVE_SCENE == "TEST") {
+    vertFov = 60;
+    focDist = 3;
+    focAngle = 0;
+    setView([0, 0, 2], [0, 0, 0]);
+  }
 
-  /*
-  // Defaults test scene RIOW
-  vertFov = 20;
-  focDist = 10;
-  focAngle = 0.6;
-  setView([13, 2, 3], [0, 0, 0]);
-  //*/
+  if(ACTIVE_SCENE == "RIOW") {
+    vertFov = 20;
+    focDist = 10;
+    focAngle = 0.6;
+    setView([13, 2, 3], [0, 0, 0]);
+  }
 }
 
 function handleCameraKeyEvent(e)
@@ -509,43 +516,40 @@ async function startRender()
 
 function createScene()
 {
-  //*
-  // Test scene 1
-  addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
-  addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
+  if(ACTIVE_SCENE == "TEST") {
+    addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
+    addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
 
-  let glassMatOfs = addGlass([1, 1, 1], 1.5);
-  addSphere([0, 0, 0], 0.5, glassMatOfs);
-  addSphere([0, 0, 0], -0.45, glassMatOfs);
+    let glassMatOfs = addGlass([1, 1, 1], 1.5);
+    addSphere([0, 0, 0], 0.5, glassMatOfs);
+    addSphere([0, 0, 0], -0.45, glassMatOfs);
 
-  addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
-  //*/
+    addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
+  }
 
-  /*
-  // Test scene RIOW
-  addSphere([0, -1000, 0], 1000, addLambert([0.5, 0.5, 0.5]));
+  if(ACTIVE_SCENE == "RIOW") {
+    addSphere([0, -1000, 0], 1000, addLambert([0.5, 0.5, 0.5]));
+    addSphere([0, 1, 0], 1, addGlass([1, 1, 1], 1.5));
+    addSphere([-4, 1, 0], 1, addLambert([0.4, 0.2, 0.1]));
+    addSphere([4, 1, 0], 1, addMetal([0.7, 0.6, 0.5], 0));
 
-  for(a=-11; a<11; a++) {
-    for(b=-11; b<11; b++) {
-      let chooseMat = rand();
-      let center = [a + 0.9 * rand(), 0.2, b + 0.9 * rand()];
-      if(vec3Length(vec3Add(center, [-4, -0.2, 0])) > 0.9) {
-        let mat;
-        if(chooseMat < 0.8)
-          mat = addLambert(vec3Mul(vec3Rand(), vec3Rand()));
-        else if(chooseMat < 0.95)
-          mat = addMetal(vec3RandRange(0.5, 1), randRange(0, 0.5));
-        else
-          mat = addGlass([1, 1, 1], 1.5);
-        addSphere(center, 0.2, mat);
+    for(a=-11; a<11; a++) {
+      for(b=-11; b<11; b++) {
+        let chooseMat = rand();
+        let center = [a + 0.9 * rand(), 0.2, b + 0.9 * rand()];
+        if(vec3Length(vec3Add(center, [-4, -0.2, 0])) > 0.9) {
+          let mat;
+          if(chooseMat < 0.8)
+            mat = addLambert(vec3Mul(vec3Rand(), vec3Rand()));
+          else if(chooseMat < 0.95)
+            mat = addMetal(vec3RandRange(0.5, 1), randRange(0, 0.5));
+          else
+            mat = addGlass([1, 1, 1], 1.5);
+          addSphere(center, 0.2, mat);
+        }
       }
     }
   }
-
-  addSphere([0, 1, 0], 1, addGlass([1, 1, 1], 1.5));
-  addSphere([-4, 1, 0], 1, addLambert([0.4, 0.2, 0.1]));
-  addSphere([4, 1, 0], 1, addMetal([0.7, 0.6, 0.5], 0));
-  //*/
 }
 
 async function main()
