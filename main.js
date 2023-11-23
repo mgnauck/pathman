@@ -1,14 +1,14 @@
 const FULLSCREEN = false;
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 1280;
+const CANVAS_WIDTH = 800;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
 const ACTIVE_SCENE = "RIOW";
 //const ACTIVE_SCENE = "TEST";
 
 const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 1;
-const TEMPORAL_WEIGHT = 0;
+const SAMPLES_PER_PIXEL = 2;
+const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
@@ -215,7 +215,7 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
 async function createGpuResources(objectsSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
-    size: 36 * 4,
+    size: 32 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
   });
 
@@ -302,7 +302,7 @@ function copyCanvasData()
 
 function copyViewData()
 {
-  device.queue.writeBuffer(globalsBuffer, 12 * 4, new Float32Array([
+  device.queue.writeBuffer(globalsBuffer, 8 * 4, new Float32Array([
     ...eye, vertFov,
     ...right, focDist,
     ...up, focAngle,
@@ -314,7 +314,7 @@ function copyViewData()
 function copyFrameData(time)
 {
   device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array([
-    rand(), rand(), rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* pad */ 0, 0, 0])); 
+    rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* pad */ 0])); 
 }
 
 function render(time)

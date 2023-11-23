@@ -4,12 +4,10 @@ struct Global
   height: u32,
   samplesPerPixel: u32,
   maxRecursion: u32,
-  randSeed: vec3f,
+  rngSeed: f32,
   weight: f32,
   time: f32,
   pad1: f32,
-  pad2: f32,
-  pad3: f32,
   eye: vec3f,
   vertFov: f32,
   right: vec3f,
@@ -17,11 +15,11 @@ struct Global
   up: vec3f,
   focAngle: f32,
   pixelDeltaX: vec3f,
-  pad4: f32,
+  pad2: f32,
   pixelDeltaY: vec3f,
-  pad5: f32,
+  pad3: f32,
   pixelTopLeft: vec3f,
-  pad6: f32
+  pad4: f32
 }
 
 struct Ray
@@ -59,24 +57,14 @@ const MAT_TYPE_GLASS = 2;
 @group(0) @binding(3) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(4) var<storage, read_write> image: array<vec4f>;
 
-var<private> seed: vec3u;
+var<private> rngState: u32;
 
-// PRNG taken from WebGPU samples
-fn initRand(invocationId: vec3u, initialSeed: vec3u)
-{
-  const A = vec3(1741651 * 1009,
-                 140893  * 1609 * 13,
-                 6521    * 983  * 7 * 2);
-  seed = (invocationId * A) ^ initialSeed;
-}
-
+// https://jcgt.org/published/0009/03/02/
 fn rand() -> f32
 {
-  const C = vec3(60493  * 9377,
-                 11279  * 2539 * 23,
-                 7919   * 631  * 5 * 3);
-  seed = (seed * C) ^ (seed.yzx >> vec3(4u));
-  return f32(seed.x ^ seed.y) / f32(0xffffffff);
+  rngState = rngState * 747796405u + 2891336453u;
+  let word = ((rngState >> ((rngState >> 28u) + 4u)) ^ rngState) * 277803737u;
+  return f32((word >> 22u) ^ word) / f32(0xffffffffu);
 }
 
 fn randRange(valueMin: f32, valueMax: f32) -> f32
@@ -234,7 +222,7 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
       return evalMaterialGlass(in, h, att, out);
     }
     default: {
-      // TODO How to indicate an error?
+      // TODO Have some error material that outputs red
       return false;
     }
   }
@@ -244,8 +232,11 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
 {
   var objOfs = 0u;
   (*hit).dist = tmax;
-
-  loop {  
+   
+  loop {
+    //intersectSphere(ray, tmin, (*hit).dist, objOfs, hit);
+    //objOfs += 6;
+   
     switch(u32(objects[objOfs])) {
       case OBJ_TYPE_SPHERE: {
         intersectSphere(ray, tmin, (*hit).dist, objOfs, hit);
@@ -255,10 +246,11 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
         objOfs += 0;
       }
       default: {
-        // Jump beyond end of data on error
-        objOfs += 99999;
+        // On error, jump beyond end of data
+        objOfs += 999999;
       }
     }
+
     if(objOfs >= arrayLength(&objects)) {
       break;
     }
@@ -324,14 +316,14 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
     return;
   }
   
-  initRand(globalId, vec3u(globals.randSeed * 0xffffffff));
+  let index = globals.width * globalId.y + globalId.x;
+  rngState = index ^ u32(globals.rngSeed * 0xffffffff); 
 
   var col = vec3f(0);
   for(var i=0u; i<globals.samplesPerPixel; i++) {
     col += render(createPrimaryRay(vec2f(globalId.xy)), MAX_DIST);
   }
 
-  let index = globals.width * globalId.y + globalId.x;
   let outCol = mix(buffer[index].xyz, col / f32(globals.samplesPerPixel), globals.weight);
 
   buffer[index] = vec4f(outCol, 1);
