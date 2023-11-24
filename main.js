@@ -13,11 +13,11 @@ const TEMPORAL_WEIGHT = 0.1;
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
-const OBJ_TYPE_SPHERE = 0;
-const OBJ_TYPE_PLANE = 1;
-const OBJ_TYPE_BOX = 2;
-const OBJ_TYPE_CYLINDER = 3;
-const OBJ_TYPE_MESH = 4;
+const SHAPE_TYPE_SPHERE = 0;
+const SHAPE_TYPE_PLANE = 1;
+const SHAPE_TYPE_BOX = 2;
+const SHAPE_TYPE_CYLINDER = 3;
+const SHAPE_TYPE_MESH = 4;
 
 const MAT_TYPE_LAMBERT = 0;
 const MAT_TYPE_METAL = 1;
@@ -31,6 +31,7 @@ let context;
 let device;
 let globalsBuffer;
 let objectsBuffer;
+let shapesBuffer;
 let materialsBuffer;
 let bindGroup;
 let pipelineLayout;
@@ -47,6 +48,7 @@ let vertFov, focDist, focAngle;
 let pixelDeltaX, pixelDeltaY, pixelTopLeft;
 
 let objects = [];
+let shapes = [];
 let materials = [];
 
 let orbitCam = false;
@@ -126,43 +128,47 @@ function vec3FromSpherical(theta, phi)
   return [Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi)];
 }
 
-function addSphere(center, radius, materialOffset)
+function addObject(shapeType, shapeOfs, matType, matOfs)
 {
-  objects.push(OBJ_TYPE_SPHERE);
-  objects.push(...center);
-  objects.push(radius);
-  objects.push(materialOffset);
+  objects.push(shapeType);
+  objects.push(shapeOfs);
+  objects.push(matType);
+  objects.push(matOfs);
 }
 
-function addPlane(point, normal, materialOffset)
+function addSphere(center, radius)
 {
-  objects.push(OBJ_TYPE_PLANE);
-  objects.push(...point);
-  objects.push(...normal);
-  objects.push(materialOffset);
+  shapes.push(...center);
+  shapes.push(radius);
+  return shapes.length / 4 - 1
+}
+
+function addPlane(normal, dist)
+{
+  shapes.push(...normal);
+  shapes.push(dist);
+  return shapes.length / 4 - 1
 }
 
 function addLambert(albedo)
 {
-  materials.push(MAT_TYPE_LAMBERT);
   materials.push(...albedo);
-  return materials.length - 4;
+  materials.push(0); // pad
+  return materials.length / 4 - 1;
 }
 
 function addMetal(albedo, fuzzRadius)
 {
-  materials.push(MAT_TYPE_METAL);
   materials.push(...albedo);
   materials.push(fuzzRadius);
-  return materials.length - 5;
+  return materials.length / 4 - 1;
 }
 
 function addGlass(albedo, refractionIndex)
 {
-  materials.push(MAT_TYPE_GLASS);
   materials.push(...albedo);
   materials.push(refractionIndex);
-  return materials.length - 5;
+  return materials.length / 4 - 1;
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -212,7 +218,7 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
   passEncoder.end();
 }
 
-async function createGpuResources(objectsSize, materialsSize)
+async function createGpuResources(objectsSize, shapesSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
     size: 32 * 4,
@@ -221,6 +227,11 @@ async function createGpuResources(objectsSize, materialsSize)
 
   objectsBuffer = device.createBuffer({
     size: objectsSize * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+
+  shapesBuffer = device.createBuffer({
+    size: shapesSize * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
@@ -244,8 +255,9 @@ async function createGpuResources(objectsSize, materialsSize)
       {binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}},
       {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
       {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
-      {binding: 4, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      {binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
+      {binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
+      {binding: 5, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
     ]
   });
 
@@ -254,9 +266,10 @@ async function createGpuResources(objectsSize, materialsSize)
     entries: [
       {binding: 0, resource: {buffer: globalsBuffer}},
       {binding: 1, resource: {buffer: objectsBuffer}},
-      {binding: 2, resource: {buffer: materialsBuffer}},
-      {binding: 3, resource: {buffer: accumulationBuffer}},
-      {binding: 4, resource: {buffer: imageBuffer}}
+      {binding: 2, resource: {buffer: shapesBuffer}},
+      {binding: 3, resource: {buffer: materialsBuffer}},
+      {binding: 4, resource: {buffer: accumulationBuffer}},
+      {binding: 5, resource: {buffer: imageBuffer}}
     ]
   });
 
@@ -290,7 +303,8 @@ async function createPipelines()
 
 function copySceneData()
 {
-  device.queue.writeBuffer(objectsBuffer, 0, new Float32Array([...objects]));
+  device.queue.writeBuffer(objectsBuffer, 0, new Uint32Array([...objects]));
+  device.queue.writeBuffer(shapesBuffer, 0, new Float32Array([...shapes]));
   device.queue.writeBuffer(materialsBuffer, 0, new Float32Array([...materials]));
 }
 
@@ -517,35 +531,39 @@ async function startRender()
 function createScene()
 {
   if(ACTIVE_SCENE == "TEST") {
-    addSphere([0, -100.5, 0], 100, addLambert([0.5, 0.5, 0.5]));
-    addSphere([-1, 0, 0], 0.5, addLambert([0.6, 0.3, 0.3]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, -100.5, 0], 100), MAT_TYPE_LAMBERT, addLambert([0.5, 0.5, 0.5]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([-1, 0, 0], 0.5), MAT_TYPE_LAMBERT, addLambert([0.6, 0.3, 0.3]));
 
     let glassMatOfs = addGlass([1, 1, 1], 1.5);
-    addSphere([0, 0, 0], 0.5, glassMatOfs);
-    addSphere([0, 0, 0], -0.45, glassMatOfs);
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 0], 0.5), MAT_TYPE_GLASS, glassMatOfs);
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 0], -0.45), MAT_TYPE_GLASS, glassMatOfs);
 
-    addSphere([1, 0, 0], 0.5, addMetal([0.3, 0.3, 0.6], 0));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([1, 0, 0], 0.5), MAT_TYPE_METAL, addMetal([0.3, 0.3, 0.6], 0));
   }
 
   if(ACTIVE_SCENE == "RIOW") {
-    addSphere([0, -1000, 0], 1000, addLambert([0.5, 0.5, 0.5]));
-    addSphere([0, 1, 0], 1, addGlass([1, 1, 1], 1.5));
-    addSphere([-4, 1, 0], 1, addLambert([0.4, 0.2, 0.1]));
-    addSphere([4, 1, 0], 1, addMetal([0.7, 0.6, 0.5], 0));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, -1000, 0], 1000), MAT_TYPE_LAMBERT, addLambert([0.5, 0.5, 0.5]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 1, 0], 1), MAT_TYPE_GLASS, addGlass([1, 1, 1], 1.5));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([-4, 1, 0], 1), MAT_TYPE_LAMBERT, addLambert([0.4, 0.2, 0.1]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([4, 1, 0], 1), MAT_TYPE_METAL, addMetal([0.7, 0.6, 0.5], 0));
 
     for(a=-11; a<11; a++) {
       for(b=-11; b<11; b++) {
-        let chooseMat = rand();
+        let matProb = rand();
         let center = [a + 0.9 * rand(), 0.2, b + 0.9 * rand()];
         if(vec3Length(vec3Add(center, [-4, -0.2, 0])) > 0.9) {
-          let mat;
-          if(chooseMat < 0.8)
-            mat = addLambert(vec3Mul(vec3Rand(), vec3Rand()));
-          else if(chooseMat < 0.95)
-            mat = addMetal(vec3RandRange(0.5, 1), randRange(0, 0.5));
-          else
-            mat = addGlass([1, 1, 1], 1.5);
-          addSphere(center, 0.2, mat);
+          let matType, matOfs;
+          if(matProb < 0.8) {
+            matType = MAT_TYPE_LAMBERT;
+            matOfs = addLambert(vec3Mul(vec3Rand(), vec3Rand()));
+          } else if(matProb < 0.95) {
+            matType = MAT_TYPE_METAL;
+            matOfs = addMetal(vec3RandRange(0.5, 1), randRange(0, 0.5));
+          } else {
+            matType = MAT_TYPE_GLASS;
+            matOfs = addGlass([1, 1, 1], 1.5);
+          }
+          addObject(SHAPE_TYPE_SPHERE, addSphere(center, 0.2), matType, matOfs);
         }
       }
     }
@@ -566,7 +584,7 @@ async function main()
     throw new Error("Failed to request logical device.");
 
   createScene();
-  await createGpuResources(objects.length, materials.length);
+  await createGpuResources(objects.length, shapes.length, materials.length);
 
   copyCanvasData();
   copySceneData();

@@ -28,12 +28,20 @@ struct Ray
   dir: vec3f
 }
 
+struct Object
+{
+  shapeType: u32,
+  shapeOfs: u32,
+  matType: u32,
+  matOfs: u32
+}
+
 struct Hit
 {
-  dist: f32,
   pos: vec3f,
   nrm: vec3f,
   inside: bool,
+  matType: u32,
   matOfs: u32
 }
 
@@ -41,21 +49,22 @@ const EPSILON = 0.001;
 const PI = 3.141592;
 const MAX_DIST = 3.402823466e+38;
 
-const OBJ_TYPE_SPHERE = 0;
-const OBJ_TYPE_PLANE = 1;
-const OBJ_TYPE_BOX = 2;
-const OBJ_TYPE_CYLINDER = 3;
-const OBJ_TYPE_MESH = 4;
+const SHAPE_TYPE_SPHERE = 0;
+const SHAPE_TYPE_PLANE = 1;
+const SHAPE_TYPE_BOX = 2;
+const SHAPE_TYPE_CYLINDER = 3;
+const SHAPE_TYPE_MESH = 4;
 
 const MAT_TYPE_LAMBERT = 0;
 const MAT_TYPE_METAL = 1;
 const MAT_TYPE_GLASS = 2;
 
 @group(0) @binding(0) var<uniform> globals: Global;
-@group(0) @binding(1) var<storage, read> objects: array<f32>;
-@group(0) @binding(2) var<storage, read> materials: array<f32>;
-@group(0) @binding(3) var<storage, read_write> buffer: array<vec4f>;
-@group(0) @binding(4) var<storage, read_write> image: array<vec4f>;
+@group(0) @binding(1) var<storage, read> objects: array<Object>;
+@group(0) @binding(2) var<storage, read> shapes: array<vec4f>;
+@group(0) @binding(3) var<storage, read> materials: array<vec4f>;
+@group(0) @binding(4) var<storage, read_write> buffer: array<vec4f>;
+@group(0) @binding(5) var<storage, read_write> image: array<vec4f>;
 
 var<private> rngState: u32;
 
@@ -99,36 +108,13 @@ fn rand3Hemi(nrm: vec3f) -> vec3f
 
 fn rand2Disk() -> vec2f
 {
-  let u = vec2f(rand(), rand());
-  let uOffset = 2 * u - vec2f(1, 1);
-
-  if(uOffset.x == 0 && uOffset.y == 0) {
-    return vec2f(0);
-  }
-  
-  var theta = 0.0;
-  var r = 0.0;
-  if(abs(uOffset.x) > abs(uOffset.y)) {
-    r = uOffset.x;
-    theta = (PI / 4) * (uOffset.y / uOffset.x);
-  } else {
-    r = uOffset.y;
-    theta = (PI / 2) - (PI / 4) * (uOffset.x / uOffset.y);
-  }
-  
-  return r * vec2f(cos(theta), sin(theta));
+  let r = sqrt(rand());
+  let theta = 2 * PI * rand();
+  return vec2f(r * cos(theta), r * sin(theta));
 }
 
-fn rayPos(r: Ray, dist: f32) -> vec3f
+fn intersectSphere(r: Ray, tmin: f32, tmax: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
 {
-  return r.ori + dist * r.dir;
-}
-
-fn intersectSphere(r: Ray, tmin: f32, tmax: f32, objOfs: u32, h: ptr<function, Hit>) -> bool
-{
-  let center = vec3f(objects[objOfs + 1], objects[objOfs + 2], objects[objOfs + 3]);
-  let radius = objects[objOfs + 4];
-
   let oc = r.ori - center;
   let a = dot(r.dir, r.dir);
   let b = dot(oc, r.dir); // half
@@ -148,31 +134,33 @@ fn intersectSphere(r: Ray, tmin: f32, tmax: f32, objOfs: u32, h: ptr<function, H
     }
   }
 
-  (*h).dist = t;
-  (*h).pos = rayPos(r, t);
-  (*h).nrm = ((*h).pos - center) / radius;
-  (*h).inside = dot(r.dir, (*h).nrm) > 0;
-  (*h).nrm *= select(1.0, -1.0, (*h).inside);
-  (*h).matOfs = u32(objects[objOfs + 5]);
+  *dist = t;
 
   return true;
 }
 
-fn evalMaterialLambert(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn completeHitSphere(ray: Ray, dist: f32, center: vec3f, radius: f32, h: ptr<function, Hit>)
+{
+  (*h).pos = ray.ori + dist * ray.dir;
+  (*h).nrm = ((*h).pos - center) / radius;
+  (*h).inside = dot(ray.dir, (*h).nrm) > 0;
+  (*h).nrm *= select(1.0, -1.0, (*h).inside); 
+}
+
+fn evalMaterialLambert(in: Ray, h: Hit, albedo: vec3f, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let dir = h.nrm + rand3UnitSphere(); 
-  *out = Ray(h.pos, select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON))));
-  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
+  *outDir = select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON)));
+  *att = albedo;
   return true;
 }
 
-fn evalMaterialMetal(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialMetal(in: Ray, h: Hit, albedo: vec3f, fuzzRadius: f32, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  let fuzzRadius = materials[h.matOfs + 4];
-  let dir = reflect(normalize(in.dir), h.nrm);
-  *out = Ray(h.pos, dir + fuzzRadius * rand3UnitSphere());
-  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
-  return dot((*out).dir, h.nrm) > 0;
+  let dir = reflect(in.dir, h.nrm);
+  *outDir = normalize(dir + fuzzRadius * rand3UnitSphere());
+  *att = albedo;
+  return dot(*outDir, h.nrm) > 0; //// !
 }
 
 fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
@@ -182,44 +170,45 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
   return r0 + (1 - r0) * pow(1 - cosTheta, 5);
 }
 
-fn evalMaterialGlass(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  let refractionIndex = materials[h.matOfs + 4];
   let refracIndexRatio = select(1 / refractionIndex, refractionIndex, h.inside);
-  let inDir = normalize(in.dir);
   
-  let cosTheta = min(dot(-inDir, h.nrm), 1);
+  let cosTheta = min(dot(-in.dir, h.nrm), 1);
   /*let sinTheta = sqrt(1 - cosTheta * cosTheta);
 
   var dir: vec3f;
   if(refracIndexRatio * sinTheta > 1 || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
-    dir = reflect(inDir, h.nrm);
+    dir = reflect(in.dir, h.nrm);
   } else {
-    dir = refract(inDir, h.nrm, refracIndexRatio);
+    dir = refract(in.dir, h.nrm, refracIndexRatio);
   }*/
 
-  var dir = refract(inDir, h.nrm, refracIndexRatio);
+  var dir = refract(in.dir, h.nrm, refracIndexRatio);
   if(all(dir == vec3f(0)) || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
-    dir = reflect(inDir, h.nrm);
+    dir = reflect(in.dir, h.nrm);
   }
 
-  *out = Ray(h.pos, dir);
-  *att = vec3f(materials[h.matOfs + 1], materials[h.matOfs + 2], materials[h.matOfs + 3]);
+  *outDir = dir;
+  *att = albedo;
   return true;
 }
 
-fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, Ray>) -> bool
+fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  switch(u32(materials[h.matOfs]))
+  switch(u32(h.matType))
   {
-    case MAT_TYPE_LAMBERT: { 
-      return evalMaterialLambert(in, h, att, out);
+    case MAT_TYPE_LAMBERT: {
+      let data = materials[h.matOfs];
+      return evalMaterialLambert(in, h, data.xyz, att, outDir);
     }
     case MAT_TYPE_METAL: {
-      return evalMaterialMetal(in, h, att, out);
+      let data = materials[h.matOfs];
+      return evalMaterialMetal(in, h, data.xyz, data.w, att, outDir);
     }
-    case MAT_TYPE_GLASS: { 
-      return evalMaterialGlass(in, h, att, out);
+    case MAT_TYPE_GLASS: {
+      let data = materials[h.matOfs];
+      return evalMaterialGlass(in, h, data.xyz, data.w, att, outDir);
     }
     default: {
       // TODO Have some error material that outputs red
@@ -230,33 +219,49 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, out: ptr<function, R
 
 fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
 {
-  var objOfs = 0u;
-  (*hit).dist = tmax;
+  var dist = tmax;
+  var objId: u32;
    
-  loop {
-    //intersectSphere(ray, tmin, (*hit).dist, objOfs, hit);
-    //objOfs += 6;
-   
-    switch(u32(objects[objOfs])) {
-      case OBJ_TYPE_SPHERE: {
-        intersectSphere(ray, tmin, (*hit).dist, objOfs, hit);
-        objOfs += 6;
+  for(var i=0u; i<arrayLength(&objects); i++) {
+    let obj = &objects[i];
+    switch((*obj).shapeType) {
+      case SHAPE_TYPE_SPHERE: {
+        let data = shapes[(*obj).shapeOfs];
+        var currDist: f32;   
+        if(intersectSphere(ray, tmin, dist, data.xyz, data.w, &currDist)) {
+          dist = currDist;
+          objId = i;
+        }
       }
-      case OBJ_TYPE_PLANE: {
-        objOfs += 0;
+      case SHAPE_TYPE_PLANE: {
       }
       default: {
         // On error, jump beyond end of data
-        objOfs += 999999;
       }
-    }
-
-    if(objOfs >= arrayLength(&objects)) {
-      break;
     }
   }
 
-  return (*hit).dist < tmax;
+  if(dist < tmax) {
+    let obj = &objects[objId];
+    switch((*obj).shapeType) {
+      case SHAPE_TYPE_SPHERE: {
+        let data = shapes[(*obj).shapeOfs];
+        completeHitSphere(ray, dist, data.xyz, data.w, hit);
+      }
+      case SHAPE_TYPE_PLANE: {
+      }
+      default: {
+        // On error, jump beyond end of data
+      }
+    }
+
+    (*hit).matType = (*obj).matType;
+    (*hit).matOfs = (*obj).matOfs;
+    
+    return true;
+  }
+
+  return false;
 }
 
 fn sampleBackground(ray: Ray) -> vec3f
@@ -275,10 +280,10 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
   loop {
     if(intersectScene(r, EPSILON, MAX_DIST, &h)) {
       var att: vec3f;
-      var s: Ray;
-      if(evalMaterial(r, h, &att, &s)) {
+      var newDir: vec3f;
+      if(evalMaterial(r, h, &att, &newDir)) {
         col *= att;
-        r = s;
+        r = Ray(h.pos, newDir);
       }
     } else {
       col *= sampleBackground(r);
