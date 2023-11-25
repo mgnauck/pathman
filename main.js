@@ -1,13 +1,13 @@
 const FULLSCREEN = false;
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 800;
+const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
-const ACTIVE_SCENE = "RIOW";
-//const ACTIVE_SCENE = "TEST";
+//const ACTIVE_SCENE = "RIOW";
+const ACTIVE_SCENE = "TEST";
 
 const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 2;
+const SAMPLES_PER_PIXEL = 20;
 const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
@@ -433,7 +433,7 @@ function resetView()
   }
 }
 
-function handleCameraKeyEvent(e)
+function handleKeyEvent(e)
 {
   switch (e.key) {
     case "a":
@@ -466,6 +466,11 @@ function handleCameraKeyEvent(e)
     case "o":
       orbitCam = !orbitCam;
       break;
+    case "l":
+      createPipelines();
+      updateView();
+      console.log("Visual shader reloaded");
+      break;
   }
 
   updateView();
@@ -481,17 +486,6 @@ function handleCameraMouseMoveEvent(e)
   fwd = vec3FromSpherical(theta, phi);
 
   updateView();
-}
-
-async function handleKeyEvent(e)
-{    
-  switch (e.key) {
-    case "l":
-      createPipelines();
-      updateView();
-      console.log("Visual shader reloaded");
-      break;
-  }
 }
 
 async function startRender()
@@ -517,10 +511,8 @@ async function startRender()
 
   document.addEventListener("pointerlockchange", () => {
     if(document.pointerLockElement === canvas) {
-      document.addEventListener("keydown", handleCameraKeyEvent);
       canvas.addEventListener("mousemove", handleCameraMouseMoveEvent);
     } else {
-      document.removeEventListener("keydown", handleCameraKeyEvent);
       canvas.removeEventListener("mousemove", handleCameraMouseMoveEvent);
     }
   });

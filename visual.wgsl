@@ -25,7 +25,8 @@ struct Global
 struct Ray
 {
   ori: vec3f,
-  dir: vec3f
+  dir: vec3f,
+  invDir: vec3f
 }
 
 struct Object
@@ -106,11 +107,42 @@ fn rand3Hemi(nrm: vec3f) -> vec3f
   return select(-v, v, dot(v, nrm) > 0);
 }
 
+// https://mathworld.wolfram.com/DiskPointPicking.html
 fn rand2Disk() -> vec2f
 {
   let r = sqrt(rand());
   let theta = 2 * PI * rand();
   return vec2f(r * cos(theta), r * sin(theta));
+}
+
+fn minComp(v: vec3f) -> f32
+{
+  return min(v.x, min(v.y, v.z));
+}
+
+fn maxComp(v: vec3f) -> f32
+{
+  return max(v.x, max(v.y, v.z));
+}
+
+fn createRay(ori: vec3f, dir: vec3f) -> Ray
+{
+  var r: Ray;
+  r.ori = ori;
+  r.dir = dir;
+  r.invDir = 1 / r.dir;
+  return r;
+}
+
+fn intersectAabb(r: Ray, minExt: vec3f, maxExt: vec3f) -> bool
+{
+  let t0 = (minExt - r.ori) * r.invDir;
+  let t1 = (maxExt - r.ori) * r.invDir;
+
+  let tmin = min(t0, t1);
+  let tmax = max(t0, t1);
+
+  return maxComp(tmin) <= minComp(tmax);
 }
 
 fn intersectSphere(r: Ray, tmin: f32, tmax: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
@@ -160,7 +192,7 @@ fn evalMaterialMetal(in: Ray, h: Hit, albedo: vec3f, fuzzRadius: f32, att: ptr<f
   let dir = reflect(in.dir, h.nrm);
   *outDir = normalize(dir + fuzzRadius * rand3UnitSphere());
   *att = albedo;
-  return dot(*outDir, h.nrm) > 0; //// !
+  return dot(*outDir, h.nrm) > 0;
 }
 
 fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
@@ -227,7 +259,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
         let data = shapes[(*obj).shapeOfs];
-        var currDist: f32;   
+        var currDist: f32;
         if(intersectSphere(ray, tmin, dist, data.xyz, data.w, &currDist)) {
           dist = currDist;
           objId = i;
@@ -236,7 +268,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
       case SHAPE_TYPE_PLANE: {
       }
       default: {
-        // On error, jump beyond end of data
+        return false;
       }
     }
   }
@@ -251,7 +283,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
       case SHAPE_TYPE_PLANE: {
       }
       default: {
-        // On error, jump beyond end of data
+        return false;
       }
     }
 
@@ -266,7 +298,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
 
 fn sampleBackground(ray: Ray) -> vec3f
 {
-  let t = (normalize(ray.dir).y + 1.0) * 0.5;
+  let t = (ray.dir.y + 1.0) * 0.5;
   return (1.0 - t) * vec3f(1.0) + t * vec3f(0.5, 0.7, 1.0);
 }
 
@@ -283,7 +315,10 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
       var newDir: vec3f;
       if(evalMaterial(r, h, &att, &newDir)) {
         col *= att;
-        r = Ray(h.pos, newDir);
+        r = createRay(h.pos, newDir);
+      } else {
+        // Max depth reached or material does not contribute to final color
+        break;
       }
     } else {
       col *= sampleBackground(r);
@@ -311,7 +346,7 @@ fn createPrimaryRay(pixelPos: vec2f) -> Ray
     eyeSample += focRadius * (diskSample.x * globals.right + diskSample.y * globals.up);
   }
 
-  return Ray(eyeSample, normalize(pixelSample - eyeSample));
+  return createRay(eyeSample, normalize(pixelSample - eyeSample));
 }
 
 @compute @workgroup_size(8,8)
