@@ -134,15 +134,15 @@ fn createRay(ori: vec3f, dir: vec3f) -> Ray
   return r;
 }
 
-fn intersectAabb(r: Ray, minExt: vec3f, maxExt: vec3f) -> bool
+fn intersectAabb(r: Ray, minDist: f32, maxDist: f32, minExt: vec3f, maxExt: vec3f) -> bool
 {
   let t0 = (minExt - r.ori) * r.invDir;
   let t1 = (maxExt - r.ori) * r.invDir;
 
-  let tmin = min(t0, t1);
-  let tmax = max(t0, t1);
+  let tmin = maxComp(min(t0, t1));
+  let tmax = minComp(max(t0, t1));
 
-  return maxComp(tmin) <= minComp(tmax);
+  return tmin <= tmax && tmax > minDist && tmin < maxDist;
 }
 
 fn intersectSphere(r: Ray, tmin: f32, tmax: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
