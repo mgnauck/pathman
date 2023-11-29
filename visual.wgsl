@@ -29,12 +29,20 @@ struct Ray
   invDir: vec3f
 }
 
+struct BvhNode
+{
+  aabbMin: vec3f,
+  startIndex: f32, // Either index of first object or left child node
+  aabbMax: vec3f,
+  objCount: f32
+}
+
 struct Object
 {
   shapeType: u32,
-  shapeOfs: u32,
+  shapeIndex: u32,
   matType: u32,
-  matOfs: u32
+  matIndex: u32
 }
 
 struct Hit
@@ -43,7 +51,7 @@ struct Hit
   nrm: vec3f,
   inside: bool,
   matType: u32,
-  matOfs: u32
+  matIndex: u32
 }
 
 const EPSILON = 0.001;
@@ -61,11 +69,12 @@ const MAT_TYPE_METAL = 1;
 const MAT_TYPE_GLASS = 2;
 
 @group(0) @binding(0) var<uniform> globals: Global;
-@group(0) @binding(1) var<storage, read> objects: array<Object>;
-@group(0) @binding(2) var<storage, read> shapes: array<vec4f>;
-@group(0) @binding(3) var<storage, read> materials: array<vec4f>;
-@group(0) @binding(4) var<storage, read_write> buffer: array<vec4f>;
-@group(0) @binding(5) var<storage, read_write> image: array<vec4f>;
+@group(0) @binding(1) var<storage, read> bvhNodes: array<BvhNode>;
+@group(0) @binding(2) var<storage, read> objects: array<Object>;
+@group(0) @binding(3) var<storage, read> shapes: array<vec4f>;
+@group(0) @binding(4) var<storage, read> materials: array<vec4f>;
+@group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
+@group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
 var<private> rngState: u32;
 
@@ -231,15 +240,15 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function
   switch(u32(h.matType))
   {
     case MAT_TYPE_LAMBERT: {
-      let data = materials[h.matOfs];
+      let data = materials[h.matIndex];
       return evalMaterialLambert(in, h, data.xyz, att, outDir);
     }
     case MAT_TYPE_METAL: {
-      let data = materials[h.matOfs];
+      let data = materials[h.matIndex];
       return evalMaterialMetal(in, h, data.xyz, data.w, att, outDir);
     }
     case MAT_TYPE_GLASS: {
-      let data = materials[h.matOfs];
+      let data = materials[h.matIndex];
       return evalMaterialGlass(in, h, data.xyz, data.w, att, outDir);
     }
     default: {
@@ -258,7 +267,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
     let obj = &objects[i];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
-        let data = shapes[(*obj).shapeOfs];
+        let data = shapes[(*obj).shapeIndex];
         var currDist: f32;
         if(intersectSphere(ray, tmin, dist, data.xyz, data.w, &currDist)) {
           dist = currDist;
@@ -277,7 +286,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
     let obj = &objects[objId];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
-        let data = shapes[(*obj).shapeOfs];
+        let data = shapes[(*obj).shapeIndex];
         completeHitSphere(ray, dist, data.xyz, data.w, hit);
       }
       case SHAPE_TYPE_PLANE: {
@@ -288,7 +297,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
     }
 
     (*hit).matType = (*obj).matType;
-    (*hit).matOfs = (*obj).matOfs;
+    (*hit).matIndex = (*obj).matIndex;
     
     return true;
   }

@@ -7,17 +7,30 @@ const ACTIVE_SCENE = "RIOW";
 //const ACTIVE_SCENE = "TEST";
 
 const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 1;
+const SAMPLES_PER_PIXEL = 10;
 const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
+// Size of a bvh node (aabb min ext, object start index, aabb max ext, object count)
+const BVH_NODE_SIZE = 8;
+
+// Size of object data (shapeType, shapeOfs, matType, matOfs)
+const OBJECT_SIZE = 4;
+
+// Size of a line of shape data (= vec4f)
+const SHAPE_LINE_SIZE = 4;
+
+// Size of a line of material data (vec4f)
+const MAT_LINE_SIZE = 4;
+
 const SHAPE_TYPE_SPHERE = 0;
 const SHAPE_TYPE_PLANE = 1;
 const SHAPE_TYPE_BOX = 2;
 const SHAPE_TYPE_CYLINDER = 3;
-const SHAPE_TYPE_MESH = 4;
+const
+ SHAPE_TYPE_MESH = 4;
 
 const MAT_TYPE_LAMBERT = 0;
 const MAT_TYPE_METAL = 1;
@@ -30,6 +43,7 @@ let canvas;
 let context;
 let device;
 let globalsBuffer;
+let bvhNodesBuffer;
 let objectsBuffer;
 let shapesBuffer;
 let materialsBuffer;
@@ -47,6 +61,7 @@ let eye, right, up, fwd;
 let vertFov, focDist, focAngle;
 let pixelDeltaX, pixelDeltaY, pixelTopLeft;
 
+let bvhNodes = [];
 let objects = [];
 let shapes = [];
 let materials = [];
@@ -140,35 +155,152 @@ function addSphere(center, radius)
 {
   shapes.push(...center);
   shapes.push(radius);
-  return shapes.length / 4 - 1
+  return shapes.length / SHAPE_LINE_SIZE - 1
 }
 
 function addPlane(normal, dist)
 {
   shapes.push(...normal);
   shapes.push(dist);
-  return shapes.length / 4 - 1
+  return shapes.length / SHAPE_LINE_SIZE - 1
 }
 
 function addLambert(albedo)
 {
   materials.push(...albedo);
   materials.push(0); // pad
-  return materials.length / 4 - 1;
+  return materials.length / MAT_LINE_SIZE - 1;
 }
 
 function addMetal(albedo, fuzzRadius)
 {
   materials.push(...albedo);
   materials.push(fuzzRadius);
-  return materials.length / 4 - 1;
+  return materials.length / MAT_LINE_SIZE - 1;
 }
 
 function addGlass(albedo, refractionIndex)
 {
   materials.push(...albedo);
   materials.push(refractionIndex);
-  return materials.length / 4 - 1;
+  return materials.length / MAT_LINE_SIZE - 1;
+}
+
+function addBvhNode(nodeIndex, objStartIndex, objCount)
+{
+  let nodeOfs = nodeIndex * BVH_NODE_SIZE;
+
+  bvhNodes[nodeOfs + 0] = Number.MAX_VALUE;
+  bvhNodes[nodeOfs + 1] = Number.MAX_VALUE;
+  bvhNodes[nodeOfs + 2] = Number.MAX_VALUE;
+
+  bvhNodes[nodeOfs + 3] = objStartIndex;
+
+  bvhNodes[nodeOfs + 4] = Number.MIN_VALUE;
+  bvhNodes[nodeOfs + 5] = Number.MIN_VALUE;
+  bvhNodes[nodeOfs + 6] = Number.MIN_VALUE;
+
+  bvhNodes[nodeOfs + 7] = objCount;
+
+  console.log("nodeIndex: " + nodeIndex);
+  console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
+
+  for(let i=0; i<objCount; i++) {
+    let objOfs = (objStartIndex + i) * OBJECT_SIZE;
+    switch(objects[objOfs]) {
+      case SHAPE_TYPE_SPHERE:
+        let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE;
+        let center = [shapes[shapeOfs], shapes[shapeOfs + 1], shapes[shapeOfs + 2]];
+        let radius = shapes[shapeOfs + 3];
+        console.log("objIndex: " + (objStartIndex + i) + ", objOfs: " + objOfs + ", center: " + center + ", radius:" + radius);
+        bvhNodes[nodeOfs + 0] = Math.min(bvhNodes[nodeOfs + 0], center[0] - radius);
+        bvhNodes[nodeOfs + 1] = Math.min(bvhNodes[nodeOfs + 1], center[1] - radius);
+        bvhNodes[nodeOfs + 2] = Math.min(bvhNodes[nodeOfs + 2], center[2] - radius);
+        bvhNodes[nodeOfs + 4] = Math.max(bvhNodes[nodeOfs + 4], center[0] + radius);
+        bvhNodes[nodeOfs + 5] = Math.max(bvhNodes[nodeOfs + 5], center[1] + radius);
+        bvhNodes[nodeOfs + 6] = Math.max(bvhNodes[nodeOfs + 6], center[2] + radius);
+        break;
+      default:
+        alert("Unknown shape type while updating bvh node AABB");
+    }
+  }
+
+  console.log("nodeBounds: " + bvhNodes.slice(nodeOfs, nodeOfs + 3) + " / " + bvhNodes.slice(nodeOfs + 4, nodeOfs + 7));
+  console.log("----");
+}
+
+function subdivideBvhNode(nodeIndex)
+{
+  let nodeOfs = nodeIndex * BVH_NODE_SIZE;
+
+  let aabbMin = [bvhNodes[nodeOfs + 0], bvhNodes[nodeOfs + 1], bvhNodes[nodeOfs + 2]];
+  let aabbMax = [bvhNodes[nodeOfs + 4], bvhNodes[nodeOfs + 5], bvhNodes[nodeOfs + 6]];
+
+  let aabbExtent = vec3Add(aabbMax, vec3Negate(aabbMin));
+
+  // Split at longest axis
+  let splitAxisIndex = aabbExtent[1] > aabbExtent[0] ? 1 : 0;
+  splitAxisIndex = aabbExtent[2] > aabbExtent[splitAxisIndex] ? 2 : splitAxisIndex;
+
+  let splitPos = aabbMin[splitAxisIndex] + aabbExtent[splitAxisIndex] * 0.5;
+
+  let objStartIndex = bvhNodes[nodeOfs + 3];
+  let objCount = bvhNodes[nodeOfs + 7];
+
+  let l = objStartIndex;
+  let r = l + objCount - 1;
+
+  // Split objects in left side and right side given by their center
+  while(l <= r) {
+    let leftObjOfs = l * OBJECT_SIZE;
+    let axisCenter;
+    switch(objects[leftObjOfs]) {
+      case SHAPE_TYPE_SPHERE:
+        let shapeOfs = objects[leftObjOfs + 1] * SHAPE_LINE_SIZE;
+        axisCenter = shapes[shapeOfs + splitAxisIndex];
+        break;
+      default:
+        alert("Unknown shape type while subdividing bvh node");
+    }
+    if(axisCenter < splitPos)
+      l++;
+    else {
+      // Swap object data l/r
+      let rightObjOfs = r * OBJECT_SIZE;
+      for(let i=0; i<OBJECT_SIZE; i++) {
+        let t = objects[leftObjOfs + i];
+        objects[leftObjOfs + i] = objects[rightObjOfs + i];
+        objects[rightObjOfs + i] = t;
+      }
+      r--;
+    }
+  }
+
+  // Stop if one side is empty
+  let leftObjCount = l - objStartIndex;
+  if(leftObjCount == 0 || leftObjCount == objCount)
+    return;
+
+  // Child node indices
+  let leftChildIndex = bvhNodes.length / BVH_NODE_SIZE;
+  let rightChildIndex = leftChildIndex + 1;
+
+  // Current node is not a leaf node
+  // Link left child node explicitly, right one is implicitly left + 1
+  bvhNodes[nodeOfs + 3] = leftChildIndex;
+  bvhNodes[nodeOfs + 7] = 0; // Zero objects contained
+
+  addBvhNode(leftChildIndex, objStartIndex, leftObjCount);
+  addBvhNode(rightChildIndex, l, objCount - leftObjCount);
+
+  subdivideBvhNode(leftChildIndex);
+  subdivideBvhNode(rightChildIndex);
+}
+
+function createBvh()
+{
+  addBvhNode(0, 0, objects.length / OBJECT_SIZE);
+  subdivideBvhNode(0);
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -218,11 +350,16 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
   passEncoder.end();
 }
 
-async function createGpuResources(objectsSize, shapesSize, materialsSize)
+async function createGpuResources(bvhNodesSize, objectsSize, shapesSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
     size: 32 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+  });
+
+  bvhNodesBuffer = device.createBuffer({
+    size: bvhNodesSize * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
   objectsBuffer = device.createBuffer({
@@ -256,8 +393,9 @@ async function createGpuResources(objectsSize, shapesSize, materialsSize)
       {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
       {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
       {binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
-      {binding: 5, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      {binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
+      {binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
+      {binding: 6, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
     ]
   });
 
@@ -265,11 +403,12 @@ async function createGpuResources(objectsSize, shapesSize, materialsSize)
     layout: bindGroupLayout,
     entries: [
       {binding: 0, resource: {buffer: globalsBuffer}},
-      {binding: 1, resource: {buffer: objectsBuffer}},
-      {binding: 2, resource: {buffer: shapesBuffer}},
-      {binding: 3, resource: {buffer: materialsBuffer}},
-      {binding: 4, resource: {buffer: accumulationBuffer}},
-      {binding: 5, resource: {buffer: imageBuffer}}
+      {binding: 1, resource: {buffer: bvhNodesBuffer}},
+      {binding: 2, resource: {buffer: objectsBuffer}},
+      {binding: 3, resource: {buffer: shapesBuffer}},
+      {binding: 4, resource: {buffer: materialsBuffer}},
+      {binding: 5, resource: {buffer: accumulationBuffer}},
+      {binding: 6, resource: {buffer: imageBuffer}}
     ]
   });
 
@@ -303,6 +442,7 @@ async function createPipelines()
 
 function copySceneData()
 {
+  device.queue.writeBuffer(bvhNodesBuffer, 0, new Float32Array([...bvhNodes]));
   device.queue.writeBuffer(objectsBuffer, 0, new Uint32Array([...objects]));
   device.queue.writeBuffer(shapesBuffer, 0, new Float32Array([...shapes]));
   device.queue.writeBuffer(materialsBuffer, 0, new Float32Array([...materials]));
@@ -576,8 +716,9 @@ async function main()
     throw new Error("Failed to request logical device.");
 
   createScene();
-  await createGpuResources(objects.length, shapes.length, materials.length);
+  createBvh();
 
+  await createGpuResources(bvhNodes.length, objects.length, shapes.length, materials.length);
   copyCanvasData();
   copySceneData();
 
