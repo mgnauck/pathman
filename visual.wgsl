@@ -76,6 +76,8 @@ const MAT_TYPE_GLASS = 2;
 @group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
+var<private> pendingBvhNodeIndices: array<u32, 30>; // Hardcoded size array
+
 var<private> rngState: u32;
 
 // https://jcgt.org/published/0009/03/02/
@@ -258,29 +260,61 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function
   }
 }
 
-fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
-{
-  var dist = tmax;
-  var objId: u32;
-   
-  for(var i=0u; i<arrayLength(&objects); i++) {
+fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, tmin: f32, dist: ptr<function, f32>, objId: ptr<function, u32>)
+{  
+  for(var i=objStartIndex; i<objStartIndex + objCount; i++) {
     let obj = &objects[i];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
         let data = shapes[(*obj).shapeIndex];
         var currDist: f32;
-        if(intersectSphere(ray, tmin, dist, data.xyz, data.w, &currDist)) {
-          dist = currDist;
-          objId = i;
+        if(intersectSphere(ray, tmin, *dist, data.xyz, data.w, &currDist)) {
+          *dist = currDist;
+          *objId = i;
         }
       }
       case SHAPE_TYPE_PLANE: {
       }
       default: {
-        return false;
+        return;
       }
     }
   }
+}
+
+fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
+{
+  var dist = tmax;
+  var objId: u32;
+
+  var pendingPos = 0;
+  var pendingCount = 1;
+
+  pendingBvhNodeIndices[0] = 0;
+
+  loop {
+    let node = &bvhNodes[pendingBvhNodeIndices[pendingPos]];
+    if(intersectAabb(ray, tmin, dist, (*node).aabbMin, (*node).aabbMax)) {
+      let nodeObjCount = u32((*node).objCount);
+      if(nodeObjCount > 0) {
+        intersectObjects(ray, u32((*node).startIndex), nodeObjCount, tmin, &dist, &objId);
+      } else {
+        let nodeStartIndex = u32((*node).startIndex);
+        pendingBvhNodeIndices[pendingPos] = nodeStartIndex;
+        pendingBvhNodeIndices[pendingCount] = nodeStartIndex + 1;
+        pendingCount += 1;
+        continue;
+      }
+    }
+    // TODO Try LIFO/depth first
+    // TODO Try L/R node 64 byte aligned
+    pendingPos++;
+    if(pendingPos >= pendingCount) {
+      break;
+    }
+  }
+
+  // TODO Try without lazy shape data completion
 
   if(dist < tmax) {
     let obj = &objects[objId];
@@ -304,6 +338,36 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
 
   return false;
 }
+
+/*fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
+{
+  var dist = tmax;
+  var objId: u32;
+ 
+  intersectObjects(ray, 0u, arrayLength(&objects), tmin, &dist, &objId);
+
+  if(dist < tmax) {
+    let obj = &objects[objId];
+    switch((*obj).shapeType) {
+      case SHAPE_TYPE_SPHERE: {
+        let data = shapes[(*obj).shapeIndex];
+        completeHitSphere(ray, dist, data.xyz, data.w, hit);
+      }
+      case SHAPE_TYPE_PLANE: {
+      }
+      default: {
+        return false;
+      }
+    }
+
+    (*hit).matType = (*obj).matType;
+    (*hit).matIndex = (*obj).matIndex;
+    
+    return true;
+  }
+
+  return false;
+}*/
 
 fn sampleBackground(ray: Ray) -> vec3f
 {

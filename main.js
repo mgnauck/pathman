@@ -1,13 +1,13 @@
 const FULLSCREEN = false;
 const ASPECT = 16.0 / 10.0;
-const CANVAS_WIDTH = 1024;
+const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
 const ACTIVE_SCENE = "RIOW";
 //const ACTIVE_SCENE = "TEST";
 
-const MAX_RECURSION = 10;
-const SAMPLES_PER_PIXEL = 10;
+const MAX_RECURSION = 5;
+const SAMPLES_PER_PIXEL = 5;
 const TEMPORAL_WEIGHT = 0.1;
 
 const MOVE_VELOCITY = 0.05;
