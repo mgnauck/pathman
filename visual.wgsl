@@ -76,7 +76,7 @@ const MAT_TYPE_GLASS = 2;
 @group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
-var<private> nodeStack: array<u32, 32>; // Fixed size of 32
+var<private> nodeStack: array<u32, 64>; // Fixed size
 var<private> rngState: u32;
 
 // https://jcgt.org/published/0009/03/02/
@@ -308,21 +308,15 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
       let leftDist = intersectAabb(ray, minDist, dist, (*leftChildNode).aabbMin, (*leftChildNode).aabbMax);
       let rightDist = intersectAabb(ray, minDist, dist, (*rightChildNode).aabbMin, (*rightChildNode).aabbMax);
   
-      var nearNodeDist: f32;
-      var farNodeDist: f32;
-      var nearNodeIndex: u32;
-      var farNodeIndex: u32;
-
+      var nearNodeDist = leftDist;
+      var farNodeDist = rightDist;
+      var nearNodeIndex = nodeStartIndex;
+      var farNodeIndex = nodeStartIndex + 1;
       if(leftDist > rightDist) {
         nearNodeDist = rightDist;
         farNodeDist = leftDist;
-        nearNodeIndex = nodeStartIndex + 1;
-        farNodeIndex = nodeStartIndex;
-      } else {
-        nearNodeDist = leftDist;
-        farNodeDist = rightDist;
-        nearNodeIndex = nodeStartIndex;
-        farNodeIndex = nodeStartIndex + 1;
+        nearNodeIndex++;
+        farNodeIndex--;
       }
 
       if(nearNodeDist < MAX_DISTANCE) {
