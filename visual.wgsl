@@ -296,7 +296,7 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
     if(nodeObjCount > 0) {
       intersectObjects(ray, minDist, &dist, nodeStartIndex, nodeObjCount, &objId);
       if(nodeStackIndex > 0) {
-        nodeStackIndex -= 1;
+        nodeStackIndex--;
         nodeIndex = nodeStack[nodeStackIndex];
       } else {
         break;
@@ -329,11 +329,11 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
         nodeIndex = nearNodeIndex;
         if(farNodeDist < MAX_DISTANCE) {
           nodeStack[nodeStackIndex] = farNodeIndex;
-          nodeStackIndex += 1;
+          nodeStackIndex++;
         }
       } else {
         if(nodeStackIndex > 0) {
-          nodeStackIndex -= 1;
+          nodeStackIndex--;
           nodeIndex = nodeStack[nodeStackIndex];
         } else {
           break;
