@@ -76,7 +76,7 @@ const MAT_TYPE_GLASS = 2;
 @group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
-var<private> nodeStack: array<u32, 32>; // 32!
+var<private> nodeStack: array<u32, 32>; // Fixed size of 32
 var<private> rngState: u32;
 
 // https://jcgt.org/published/0009/03/02/
@@ -156,7 +156,7 @@ fn intersectAabb(r: Ray, minDist: f32, maxDist: f32, minExt: vec3f, maxExt: vec3
   return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < maxDist && tmax > minDist);
 }
 
-fn intersectSphere(r: Ray, minDist: f32, maxDist: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
+fn intersectSphere(r: Ray, minDist: f32, maxDist: f32, center: vec3f, radius: f32) -> f32
 {
   let oc = r.ori - center;
   let a = dot(r.dir, r.dir);
@@ -165,7 +165,7 @@ fn intersectSphere(r: Ray, minDist: f32, maxDist: f32, center: vec3f, radius: f3
 
   let d = b * b - a * c;
   if(d < 0) {
-    return false;
+    return MAX_DISTANCE;
   }
 
   let sqrtd = sqrt(d);
@@ -173,13 +173,11 @@ fn intersectSphere(r: Ray, minDist: f32, maxDist: f32, center: vec3f, radius: f3
   if(t <= minDist || maxDist <= t) {
     t = (-b + sqrtd) / a;
     if(t <= minDist || maxDist <= t) {
-      return false;
+      return MAX_DISTANCE;
     }
   }
 
-  *dist = t;
-
-  return true;
+  return t;
 }
 
 fn completeHitSphere(ray: Ray, dist: f32, center: vec3f, radius: f32, h: ptr<function, Hit>)
@@ -260,15 +258,15 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function
   }
 }
 
-fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, minDist: f32, dist: ptr<function, f32>, objId: ptr<function, u32>)
+fn intersectObjects(ray: Ray, minDist: f32, dist: ptr<function, f32>, objStartIndex: u32, objCount: u32, objId: ptr<function, u32>)
 {  
   for(var i=objStartIndex; i<objStartIndex + objCount; i++) {
     let obj = &objects[i];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
         let data = shapes[(*obj).shapeIndex];
-        var currDist: f32;
-        if(intersectSphere(ray, minDist, *dist, data.xyz, data.w, &currDist)) {
+        var currDist = intersectSphere(ray, minDist, *dist, data.xyz, data.w);
+        if(currDist < *dist) {
           *dist = currDist;
           *objId = i;
         }
@@ -296,7 +294,7 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
     let nodeObjCount = u32((*node).objCount);
    
     if(nodeObjCount > 0) {
-      intersectObjects(ray, nodeStartIndex, nodeObjCount, minDist, &dist, &objId);
+      intersectObjects(ray, minDist, &dist, nodeStartIndex, nodeObjCount, &objId);
       if(nodeStackIndex > 0) {
         nodeStackIndex -= 1;
         nodeIndex = nodeStack[nodeStackIndex];
@@ -327,24 +325,22 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
         farNodeIndex = nodeStartIndex + 1;
       }
 
-      if(nearNodeDist == MAX_DISTANCE) {
+      if(nearNodeDist < MAX_DISTANCE) {
+        nodeIndex = nearNodeIndex;
+        if(farNodeDist < MAX_DISTANCE) {
+          nodeStack[nodeStackIndex] = farNodeIndex;
+          nodeStackIndex += 1;
+        }
+      } else {
         if(nodeStackIndex > 0) {
           nodeStackIndex -= 1;
           nodeIndex = nodeStack[nodeStackIndex];
         } else {
           break;
         }
-      } else {
-        nodeIndex = nearNodeIndex;
-        if(farNodeDist < MAX_DISTANCE) {
-          nodeStack[nodeStackIndex] = farNodeIndex;
-          nodeStackIndex += 1;
-        }
       }
     }
   }
-
-  // TODO Try without lazy shape data completion
 
   if(dist < maxDist) {
     let obj = &objects[objId];
