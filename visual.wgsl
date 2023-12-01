@@ -56,7 +56,7 @@ struct Hit
 
 const EPSILON = 0.001;
 const PI = 3.141592;
-const MAX_DIST = 3.402823466e+38;
+const MAX_DISTANCE = 3.402823466e+38;
 
 const SHAPE_TYPE_SPHERE = 0;
 const SHAPE_TYPE_PLANE = 1;
@@ -145,18 +145,20 @@ fn createRay(ori: vec3f, dir: vec3f) -> Ray
   return r;
 }
 
-fn intersectAabb(r: Ray, minDist: f32, maxDist: f32, minExt: vec3f, maxExt: vec3f) -> bool
+fn intersectAabb(r: Ray, minDist: f32, maxDist: f32, minExt: vec3f, maxExt: vec3f) -> f32
 {
   let t0 = (minExt - r.ori) * r.invDir;
   let t1 = (maxExt - r.ori) * r.invDir;
 
   let tmin = maxComp(min(t0, t1));
   let tmax = minComp(max(t0, t1));
-
-  return tmin <= tmax && tmax > minDist && tmin < maxDist;
+  
+  //return tmin <= tmax && tmin < maxDist && tmax > minDist;
+  //return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < maxDist && tmax > 0);
+  return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < maxDist && tmax > minDist);
 }
 
-fn intersectSphere(r: Ray, tmin: f32, tmax: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
+fn intersectSphere(r: Ray, minDist: f32, maxDist: f32, center: vec3f, radius: f32, dist: ptr<function, f32>) -> bool
 {
   let oc = r.ori - center;
   let a = dot(r.dir, r.dir);
@@ -170,9 +172,9 @@ fn intersectSphere(r: Ray, tmin: f32, tmax: f32, center: vec3f, radius: f32, dis
 
   let sqrtd = sqrt(d);
   var t = (-b - sqrtd) / a;
-  if(t <= tmin || tmax <= t) {
+  if(t <= minDist || maxDist <= t) {
     t = (-b + sqrtd) / a;
-    if(t <= tmin || tmax <= t) {
+    if(t <= minDist || maxDist <= t) {
       return false;
     }
   }
@@ -260,7 +262,7 @@ fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function
   }
 }
 
-fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, tmin: f32, dist: ptr<function, f32>, objId: ptr<function, u32>)
+fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, minDist: f32, dist: ptr<function, f32>, objId: ptr<function, u32>)
 {  
   for(var i=objStartIndex; i<objStartIndex + objCount; i++) {
     let obj = &objects[i];
@@ -268,7 +270,7 @@ fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, tmin: f32, dist
       case SHAPE_TYPE_SPHERE: {
         let data = shapes[(*obj).shapeIndex];
         var currDist: f32;
-        if(intersectSphere(ray, tmin, *dist, data.xyz, data.w, &currDist)) {
+        if(intersectSphere(ray, minDist, *dist, data.xyz, data.w, &currDist)) {
           *dist = currDist;
           *objId = i;
         }
@@ -282,9 +284,9 @@ fn intersectObjects(ray: Ray, objStartIndex: u32, objCount: u32, tmin: f32, dist
   }
 }
 
-fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
+fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>) -> bool
 {
-  var dist = tmax;
+  var dist = maxDist;
   var objId: u32;
 
   var pendingPos = 0;
@@ -294,10 +296,10 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
 
   loop {
     let node = &bvhNodes[pendingBvhNodeIndices[pendingPos]];
-    if(intersectAabb(ray, tmin, dist, (*node).aabbMin, (*node).aabbMax)) {
+    if(intersectAabb(ray, minDist, dist, (*node).aabbMin, (*node).aabbMax) < MAX_DISTANCE) {
       let nodeObjCount = u32((*node).objCount);
       if(nodeObjCount > 0) {
-        intersectObjects(ray, u32((*node).startIndex), nodeObjCount, tmin, &dist, &objId);
+        intersectObjects(ray, u32((*node).startIndex), nodeObjCount, minDist, &dist, &objId);
       } else {
         let nodeStartIndex = u32((*node).startIndex);
         pendingBvhNodeIndices[pendingPos] = nodeStartIndex;
@@ -307,7 +309,6 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
       }
     }
     // TODO Try LIFO/depth first
-    // TODO Try L/R node 64 byte aligned
     pendingPos++;
     if(pendingPos >= pendingCount) {
       break;
@@ -316,7 +317,7 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
 
   // TODO Try without lazy shape data completion
 
-  if(dist < tmax) {
+  if(dist < maxDist) {
     let obj = &objects[objId];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
@@ -339,14 +340,14 @@ fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bo
   return false;
 }
 
-/*fn intersectScene(ray: Ray, tmin: f32, tmax: f32, hit: ptr<function, Hit>) -> bool
+/*fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>) -> bool
 {
-  var dist = tmax;
+  var dist = maxDist;
   var objId: u32;
  
-  intersectObjects(ray, 0u, arrayLength(&objects), tmin, &dist, &objId);
+  intersectObjects(ray, 0u, arrayLength(&objects), minDist, &dist, &objId);
 
-  if(dist < tmax) {
+  if(dist < maxDist) {
     let obj = &objects[objId];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
@@ -375,7 +376,7 @@ fn sampleBackground(ray: Ray) -> vec3f
   return (1.0 - t) * vec3f(1.0) + t * vec3f(0.5, 0.7, 1.0);
 }
 
-fn render(ray: Ray, MAX_DIST: f32) -> vec3f
+fn render(ray: Ray) -> vec3f
 {
   var h: Hit;
   var r = ray;
@@ -383,7 +384,7 @@ fn render(ray: Ray, MAX_DIST: f32) -> vec3f
   var col = vec3f(1);
 
   loop {
-    if(intersectScene(r, EPSILON, MAX_DIST, &h)) {
+    if(intersectScene(r, EPSILON, MAX_DISTANCE, &h)) {
       var att: vec3f;
       var newDir: vec3f;
       if(evalMaterial(r, h, &att, &newDir)) {
@@ -434,7 +435,7 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
 
   var col = vec3f(0);
   for(var i=0u; i<globals.samplesPerPixel; i++) {
-    col += render(createPrimaryRay(vec2f(globalId.xy)), MAX_DIST);
+    col += render(createPrimaryRay(vec2f(globalId.xy)));
   }
 
   let outCol = mix(buffer[index].xyz, col / f32(globals.samplesPerPixel), globals.weight);
