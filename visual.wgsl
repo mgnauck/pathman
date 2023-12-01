@@ -76,8 +76,7 @@ const MAT_TYPE_GLASS = 2;
 @group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
-var<private> pendingBvhNodeIndices: array<u32, 30>; // Hardcoded size array
-
+var<private> nodeStack: array<u32, 32>; // 32!
 var<private> rngState: u32;
 
 // https://jcgt.org/published/0009/03/02/
@@ -153,8 +152,7 @@ fn intersectAabb(r: Ray, minDist: f32, maxDist: f32, minExt: vec3f, maxExt: vec3
   let tmin = maxComp(min(t0, t1));
   let tmax = minComp(max(t0, t1));
   
-  //return tmin <= tmax && tmin < maxDist && tmax > minDist;
-  //return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < maxDist && tmax > 0);
+  // Does not handle case tmin < 0 && tmax as result
   return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < maxDist && tmax > minDist);
 }
 
@@ -289,29 +287,60 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
   var dist = maxDist;
   var objId: u32;
 
-  var pendingPos = 0;
-  var pendingCount = 1;
-
-  pendingBvhNodeIndices[0] = 0;
+  var nodeStackIndex = 0u;
+  var nodeIndex = 0u;
 
   loop {
-    let node = &bvhNodes[pendingBvhNodeIndices[pendingPos]];
-    if(intersectAabb(ray, minDist, dist, (*node).aabbMin, (*node).aabbMax) < MAX_DISTANCE) {
-      let nodeObjCount = u32((*node).objCount);
-      if(nodeObjCount > 0) {
-        intersectObjects(ray, u32((*node).startIndex), nodeObjCount, minDist, &dist, &objId);
+    let node = &bvhNodes[nodeIndex];
+    let nodeStartIndex = u32((*node).startIndex);
+    let nodeObjCount = u32((*node).objCount);
+   
+    if(nodeObjCount > 0) {
+      intersectObjects(ray, nodeStartIndex, nodeObjCount, minDist, &dist, &objId);
+      if(nodeStackIndex > 0) {
+        nodeStackIndex -= 1;
+        nodeIndex = nodeStack[nodeStackIndex];
       } else {
-        let nodeStartIndex = u32((*node).startIndex);
-        pendingBvhNodeIndices[pendingPos] = nodeStartIndex;
-        pendingBvhNodeIndices[pendingCount] = nodeStartIndex + 1;
-        pendingCount += 1;
-        continue;
+        break;
       }
-    }
-    // TODO Try LIFO/depth first
-    pendingPos++;
-    if(pendingPos >= pendingCount) {
-      break;
+    } else {
+      let leftChildNode = &bvhNodes[nodeStartIndex];
+      let rightChildNode = &bvhNodes[nodeStartIndex + 1];
+
+      let leftDist = intersectAabb(ray, minDist, dist, (*leftChildNode).aabbMin, (*leftChildNode).aabbMax);
+      let rightDist = intersectAabb(ray, minDist, dist, (*rightChildNode).aabbMin, (*rightChildNode).aabbMax);
+  
+      var nearNodeDist: f32;
+      var farNodeDist: f32;
+      var nearNodeIndex: u32;
+      var farNodeIndex: u32;
+
+      if(leftDist > rightDist) {
+        nearNodeDist = rightDist;
+        farNodeDist = leftDist;
+        nearNodeIndex = nodeStartIndex + 1;
+        farNodeIndex = nodeStartIndex;
+      } else {
+        nearNodeDist = leftDist;
+        farNodeDist = rightDist;
+        nearNodeIndex = nodeStartIndex;
+        farNodeIndex = nodeStartIndex + 1;
+      }
+
+      if(nearNodeDist == MAX_DISTANCE) {
+        if(nodeStackIndex > 0) {
+          nodeStackIndex -= 1;
+          nodeIndex = nodeStack[nodeStackIndex];
+        } else {
+          break;
+        }
+      } else {
+        nodeIndex = nearNodeIndex;
+        if(farNodeDist < MAX_DISTANCE) {
+          nodeStack[nodeStackIndex] = farNodeIndex;
+          nodeStackIndex += 1;
+        }
+      }
     }
   }
 
@@ -339,36 +368,6 @@ fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>)
 
   return false;
 }
-
-/*fn intersectScene(ray: Ray, minDist: f32, maxDist: f32, hit: ptr<function, Hit>) -> bool
-{
-  var dist = maxDist;
-  var objId: u32;
- 
-  intersectObjects(ray, 0u, arrayLength(&objects), minDist, &dist, &objId);
-
-  if(dist < maxDist) {
-    let obj = &objects[objId];
-    switch((*obj).shapeType) {
-      case SHAPE_TYPE_SPHERE: {
-        let data = shapes[(*obj).shapeIndex];
-        completeHitSphere(ray, dist, data.xyz, data.w, hit);
-      }
-      case SHAPE_TYPE_PLANE: {
-      }
-      default: {
-        return false;
-      }
-    }
-
-    (*hit).matType = (*obj).matType;
-    (*hit).matIndex = (*obj).matIndex;
-    
-    return true;
-  }
-
-  return false;
-}*/
 
 fn sampleBackground(ray: Ray) -> vec3f
 {
@@ -429,7 +428,7 @@ fn computeMain(@builtin(global_invocation_id) globalId: vec3u)
   if(all(globalId.xy >= vec2u(globals.width, globals.height))) {
     return;
   }
-  
+
   let index = globals.width * globalId.y + globalId.x;
   rngState = index ^ u32(globals.rngSeed * 0xffffffff); 
 
