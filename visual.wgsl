@@ -3,7 +3,7 @@ struct Global
   width: u32,
   height: u32,
   samplesPerPixel: u32,
-  maxRecursion: u32,
+  maxBounces: u32,
   rngSeed: f32,
   weight: f32,
   time: f32,
@@ -59,15 +59,15 @@ const EPSILON = 0.001;
 const PI = 3.141592;
 const MAX_DISTANCE = 3.402823466e+38;
 
-const SHAPE_TYPE_SPHERE = 0;
-const SHAPE_TYPE_PLANE = 1;
-const SHAPE_TYPE_BOX = 2;
-const SHAPE_TYPE_CYLINDER = 3;
-const SHAPE_TYPE_MESH = 4;
+const SHAPE_TYPE_SPHERE = 1;
+const SHAPE_TYPE_PLANE = 2;
+const SHAPE_TYPE_BOX = 3;
+const SHAPE_TYPE_CYLINDER = 4;
+const SHAPE_TYPE_MESH = 5;
 
-const MAT_TYPE_LAMBERT = 0;
-const MAT_TYPE_METAL = 1;
-const MAT_TYPE_GLASS = 2;
+const MAT_TYPE_LAMBERT = 1;
+const MAT_TYPE_METAL = 2;
+const MAT_TYPE_GLASS = 3;
 
 @group(0) @binding(0) var<uniform> globals: Global;
 @group(0) @binding(1) var<storage, read> bvhNodes: array<BvhNode>;
@@ -136,33 +136,33 @@ fn maxComp(v: vec3f) -> f32
   return max(v.x, max(v.y, v.z));
 }
 
-fn createRay(ori: vec3f, dir: vec3f) -> Ray
+fn createRay(ori: vec3f, dir: vec3f, tmax: f32) -> Ray
 {
   var r: Ray;
   r.ori = ori;
   r.dir = dir;
-  r.t = MAX_DISTANCE;
+  r.t = tmax;
   r.invDir = 1 / r.dir;
   return r;
 }
 
-fn intersectAabb(r: Ray, minExt: vec3f, maxExt: vec3f) -> f32
+fn intersectAabb(ray: Ray, minExt: vec3f, maxExt: vec3f) -> f32
 {
-  let t0 = (minExt - r.ori) * r.invDir;
-  let t1 = (maxExt - r.ori) * r.invDir;
+  let t0 = (minExt - ray.ori) * ray.invDir;
+  let t1 = (maxExt - ray.ori) * ray.invDir;
 
   let tmin = maxComp(min(t0, t1));
   let tmax = minComp(max(t0, t1));
   
   // Does not handle case tmin < 0 && tmax as result
-  return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < r.t && tmax > 0);
+  return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < ray.t && tmax > 0);
 }
 
-fn intersectSphere(r: Ray, center: vec3f, radius: f32) -> f32
+fn intersectSphere(ray: Ray, center: vec3f, radius: f32) -> f32
 {
-  let oc = r.ori - center;
-  let a = dot(r.dir, r.dir);
-  let b = dot(oc, r.dir); // half
+  let oc = ray.ori - center;
+  let a = dot(ray.dir, ray.dir);
+  let b = dot(oc, ray.dir); // half
   let c = dot(oc, oc) - radius * radius;
 
   let d = b * b - a * c;
@@ -172,9 +172,9 @@ fn intersectSphere(r: Ray, center: vec3f, radius: f32) -> f32
 
   let sqrtd = sqrt(d);
   var t = (-b - sqrtd) / a;
-  if(t <= EPSILON || r.t <= t) {
+  if(t <= EPSILON || ray.t <= t) {
     t = (-b + sqrtd) / a;
-    if(t <= EPSILON || r.t <= t) {
+    if(t <= EPSILON || ray.t <= t) {
       return MAX_DISTANCE;
     }
   }
@@ -274,6 +274,7 @@ fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, 
         }
       }
       case SHAPE_TYPE_PLANE: {
+        return;
       }
       default: {
         return;
@@ -366,31 +367,31 @@ fn sampleBackground(ray: Ray) -> vec3f
   return (1.0 - t) * vec3f(1.0) + t * vec3f(0.5, 0.7, 1.0);
 }
 
-fn render(ray: Ray) -> vec3f
+fn render(initialRay: Ray) -> vec3f
 {
-  var h: Hit;
-  var r = ray;
-  var depth = 0u;
+  var ray = initialRay;
+  var hit: Hit;
   var col = vec3f(1);
+  var bounce = 0u;
 
   loop {
-    if(intersectScene(&r, &h)) {
+    if(intersectScene(&ray, &hit)) {
       var att: vec3f;
       var newDir: vec3f;
-      if(evalMaterial(r, h, &att, &newDir)) {
+      if(evalMaterial(ray, hit, &att, &newDir)) {
         col *= att;
-        r = createRay(h.pos, newDir);
+        ray = createRay(hit.pos, newDir, MAX_DISTANCE);
       } else {
-        // Max depth reached or material does not contribute to final color
+        // Material does not contribute to final color
         break;
       }
     } else {
-      col *= sampleBackground(r);
+      col *= sampleBackground(ray);
       break;
     }
 
-    depth += 1;
-    if(depth >= globals.maxRecursion) {
+    bounce += 1;
+    if(bounce >= globals.maxBounces) {
       break;
     }
   }
@@ -410,7 +411,7 @@ fn createPrimaryRay(pixelPos: vec2f) -> Ray
     eyeSample += focRadius * (diskSample.x * globals.right + diskSample.y * globals.up);
   }
 
-  return createRay(eyeSample, normalize(pixelSample - eyeSample));
+  return createRay(eyeSample, normalize(pixelSample - eyeSample), MAX_DISTANCE);
 }
 
 @compute @workgroup_size(8,8)

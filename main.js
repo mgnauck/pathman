@@ -25,15 +25,15 @@ const SHAPE_LINE_SIZE = 4;
 // Size of a line of material data (vec4f)
 const MAT_LINE_SIZE = 4;
 
-const SHAPE_TYPE_SPHERE = 0;
-const SHAPE_TYPE_PLANE = 1;
-const SHAPE_TYPE_BOX = 2;
-const SHAPE_TYPE_CYLINDER = 3;
-const SHAPE_TYPE_MESH = 4;
+const SHAPE_TYPE_SPHERE = 1;
+const SHAPE_TYPE_PLANE = 2;
+const SHAPE_TYPE_BOX = 3;
+const SHAPE_TYPE_CYLINDER = 4;
+const SHAPE_TYPE_MESH = 5;
 
-const MAT_TYPE_LAMBERT = 0;
-const MAT_TYPE_METAL = 1;
-const MAT_TYPE_GLASS = 2;
+const MAT_TYPE_LAMBERT = 1;
+const MAT_TYPE_METAL = 2;
+const MAT_TYPE_GLASS = 3;
 
 const VISUAL_SHADER = `BEGIN_VISUAL_SHADER
 END_VISUAL_SHADER`;
@@ -245,8 +245,8 @@ function calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, pos)
 
 function addBvhNode(nodeIndex, objStartIndex, objCount)
 {
-  //console.log("nodeIndex: " + nodeIndex);
-  //console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
+  console.log("nodeIndex: " + nodeIndex);
+  console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
 
   let aabbMin = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
   let aabbMax = [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE];
@@ -260,22 +260,21 @@ function addBvhNode(nodeIndex, objStartIndex, objCount)
         let radius = shapes[shapeOfs + 3];
         aabbMin = vec3Min(aabbMin, vec3Add(center, [-radius, -radius, -radius]));
         aabbMax = vec3Max(aabbMax, vec3Add(center, [radius, radius, radius]));
-        //console.log("objIndex: " + (objStartIndex + i) + ", objOfs: " + objOfs + ", center: " + center + ", radius:" + radius);
+        console.log("objIndex: " + (objStartIndex + i) + ", objOfs: " + objOfs + ", center: " + center + ", radius:" + radius);
+        console.log("aabbMin: " + aabbMin + " / " + aabbMax);
         break;
       default:
         alert("Unknown shape type while updating bvh node AABB");
     }
   }
 
-  let nodeOfs = nodeIndex * BVH_NODE_SIZE;
-
   bvhNodes.push(...aabbMin);
   bvhNodes.push(objStartIndex);
   bvhNodes.push(...aabbMax);
   bvhNodes.push(objCount);
 
-  //console.log("nodeBounds: " + aabbMin + " / " + aabbMax);
-  //console.log("----");
+  console.log("nodeBounds: " + aabbMin + " / " + aabbMax);
+  console.log("----");
 }
 
 function subdivideBvhNode(nodeIndex)
@@ -286,7 +285,6 @@ function subdivideBvhNode(nodeIndex)
 
   // Split via suface area heuristic
   let bestCost = Number.MAX_VALUE;
-
   for(let axis=0; axis<3; axis++) {
     for(let i=0; i<objCount; i++) {
       let objOfs = (objStartIndex + i) * OBJECT_SIZE;
@@ -309,40 +307,7 @@ function subdivideBvhNode(nodeIndex)
 
   let parentCost = objCount * calcAabbArea(vec3FromArr(bvhNodes, nodeOfs), vec3FromArr(bvhNodes, nodeOfs + 4));
   if(parentCost <= bestCost)
-    return; 
-  //*/
-
-  /*
-  if(objCount <= 2)
     return;
-
-  // Split midpoint longest axis
-  let aabbMin = vec3FromArr(bvhNodes, nodeOfs);
-  let aabbMax = vec3FromArr(bvhNodes, nodeOfs + 4);
-
-  let aabbExtent = vec3Add(aabbMax, vec3Negate(aabbMin));
-
-  let splitAxis = aabbExtent[1] > aabbExtent[0] ? 1 : 0;
-  splitAxis = aabbExtent[2] > aabbExtent[splitAxis] ? 2 : splitAxis;
-
-  let splitPos = aabbMin[splitAxis] + aabbExtent[splitAxis] * 0.5;
-  //*/
-
-  /*
-  if(objCount <= 2)
-    return;
-
-  // Split random axis
-  let aabbMin = vec3FromArr(bvhNodes, nodeOfs);
-  let aabbMax = vec3FromArr(bvhNodes, nodeOfs + 4);
-
-  let aabbExtent = vec3Add(aabbMax, vec3Negate(aabbMin));
-
-  let randAxis = Math.random();
-  let splitAxis = randAxis < 0.33333 ? 0 : (randAxis < 0.6666 ? 1 : 2);
-
-  let splitPos = aabbMin[splitAxis] + aabbExtent[splitAxis] * 0.5;
-  //*/
 
   // Partition objects to left and right according to split axis/pos
   let l = objStartIndex;
