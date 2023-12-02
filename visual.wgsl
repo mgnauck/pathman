@@ -286,8 +286,8 @@ fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, 
 fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
 {
   var objId: u32; 
-  var nodeStackIndex = 0u;
   var nodeIndex = 0u;
+  var nodeStackIndex = 0u;
 
   loop {
     let node = &bvhNodes[nodeIndex];
@@ -308,18 +308,12 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
 
       let leftDist = intersectAabb(*ray, (*leftChildNode).aabbMin, (*leftChildNode).aabbMax);
       let rightDist = intersectAabb(*ray, (*rightChildNode).aabbMin, (*rightChildNode).aabbMax);
-  
-      var nearNodeDist = leftDist;
-      var farNodeDist = rightDist;
-      var nearNodeIndex = nodeStartIndex;
-      var farNodeIndex = nodeStartIndex + 1;
-
-      if(leftDist > rightDist) {
-        nearNodeDist = rightDist;
-        farNodeDist = leftDist;
-        nearNodeIndex++;
-        farNodeIndex--;
-      }
+ 
+      let switchNodes = leftDist > rightDist;
+      let nearNodeDist = select(leftDist, rightDist, switchNodes);
+      let farNodeDist = select(rightDist, leftDist, switchNodes);
+      let nearNodeIndex = select(nodeStartIndex, nodeStartIndex + 1, switchNodes);
+      let farNodeIndex = select(nodeStartIndex + 1, nodeStartIndex, switchNodes);
 
       if(nearNodeDist < MAX_DISTANCE) {
         nodeIndex = nearNodeIndex;
@@ -346,12 +340,12 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
         completeHitSphere(*ray, data.xyz, data.w, hit);
       }
       case SHAPE_TYPE_PLANE: {
+        return false;
       }
       default: {
         return false;
       }
     }
-
     (*hit).matType = (*obj).matType;
     (*hit).matIndex = (*obj).matIndex;
     
@@ -370,9 +364,9 @@ fn sampleBackground(ray: Ray) -> vec3f
 fn render(initialRay: Ray) -> vec3f
 {
   var ray = initialRay;
-  var hit: Hit;
   var col = vec3f(1);
   var bounce = 0u;
+  var hit: Hit;
 
   loop {
     if(intersectScene(&ray, &hit)) {
