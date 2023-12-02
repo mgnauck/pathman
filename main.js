@@ -3,8 +3,8 @@ const ASPECT = 16.0 / 10.0;
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
-const ACTIVE_SCENE = "RIOW";
-//const ACTIVE_SCENE = "TEST";
+//const ACTIVE_SCENE = "RIOW";
+const ACTIVE_SCENE = "TEST";
 
 const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
@@ -13,16 +13,18 @@ const TEMPORAL_WEIGHT = 0.1;
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
-// Size of a bvh node (aabb min ext, object start index, aabb max ext, object count)
+// Size of a bvh node
+// aabb min ext, (object/node) start index, aabb max ext, object count
 const BVH_NODE_SIZE = 8;
 
-// Size of object data (shapeType, shapeOfs, matType, matOfs)
+// Size of object data
+// shapeType, shapeOfs, matType, matOfs
 const OBJECT_SIZE = 4;
 
 // Size of a line of shape data (= vec4f)
 const SHAPE_LINE_SIZE = 4;
 
-// Size of a line of material data (vec4f)
+// Size of a line of material data (= vec4f)
 const MAT_LINE_SIZE = 4;
 
 const SHAPE_TYPE_SPHERE = 1;
@@ -122,7 +124,10 @@ function vec3Scale(v, s)
 
 function vec3Cross(a, b)
 {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0]];
 }
 
 function vec3Normalize(v)
@@ -138,8 +143,11 @@ function vec3Length(v)
 
 function vec3FromSpherical(theta, phi)
 {
-  // Spherical coordinate axis flipped to accommodate X=right/Y=up
-  return [Math.sin(theta) * Math.sin(phi), Math.cos(theta), Math.sin(theta) * Math.cos(phi)];
+  return [
+    // Spherical coordinate axis flipped to accommodate X=right/Y=up
+    Math.sin(theta) * Math.sin(phi),
+    Math.cos(theta),
+    Math.sin(theta) * Math.cos(phi)];
 }
 
 function vec3Min(a, b)
@@ -236,21 +244,29 @@ function initAabb()
     max: [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE] };
 }
 
+function combineAabbs(a, b)
+{
+  return { min: vec3Min(a.min, b.min), max: vec3Max(a.max, b.max) };
+}
+
 function calcAabbArea(aabb)
 {
   let d = vec3Add(aabb.max, vec3Negate(aabb.min));
   return d[0] * d[1] + d[1] * d[2] + d[2] * d[0];
 }
 
-function calcNodeCost(nodeIndex)
-{  
-  let nodeOfs = nodeIndex * BVH_NODE_SIZE;
-  return bvhNodes[nodeOfs + 7] * calcAabbArea(
-    { min: vec3FromArr(bvhNodes, nodeOfs), 
-      max: vec3FromArr(bvhNodes, nodeOfs + 4) });
+function calcCenterBounds(objStartIndex, objCount, axis)
+{
+  let min = Number.MAX_VALUE, max = Number.MIN_VALUE;
+  for(let i=0; i<objCount; i++) {
+    let center = getObjCenter(objStartIndex + i)[axis];
+    min = Math.min(min, center);
+    max = Math.max(max, center);
+  }
+  return { min: min, max: max };
 }
 
-function calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, pos)
+function calcSurfaceAreaCost(objStartIndex, objCount, axis, pos)
 {
   let leftAabb = initAabb();
   let rightAabb = initAabb();
@@ -259,49 +275,69 @@ function calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, pos)
   let rightCount = 0;
 
   for(let i=0; i<objCount; i++) {
-    let center = getObjCenter(objStartIndex + i);
-    let aabb = getObjAabb(objStartIndex + i);
-    if(center[axis] < pos) {
-      leftAabb.min = vec3Min(leftAabb.min, aabb.min);
-      leftAabb.max = vec3Max(leftAabb.max, aabb.max);
+    let objIndex = objStartIndex + i;
+    if(getObjCenter(objIndex)[axis] < pos) {
+      leftAabb = combineAabbs(leftAabb, getObjAabb(objIndex));
       leftCount++;
     } else {
-      rightAabb.min = vec3Min(rightAabb.min, aabb.min);
-      rightAabb.max = vec3Max(rightAabb.max, aabb.max);
+      rightAabb = combineAabbs(rightAabb, getObjAabb(objIndex));
       rightCount++;
     }
   }
 
-  let cost = leftCount * calcAabbArea(leftAabb) + rightCount * calcAabbArea(rightAabb);
+  let cost = leftCount * calcAabbArea(leftAabb) +
+    rightCount * calcAabbArea(rightAabb);
   return cost > 0 ? cost : Number.MAX_VALUE;
+}
+
+function findBestCostUniformSplit(objStartIndex, objCount)
+{
+  let steps = 20;
+  let bestCost = Number.MAX_VALUE;
+  let bestPos, bestAxis;
+  for(let axis=0; axis<3; axis++) {
+    let bounds = calcCenterBounds(objStartIndex, objCount, axis);
+    let extent = bounds.max - bounds.min;
+    if(extent > 0) {
+      let delta = extent / steps;
+      for(let i=1; i<steps; i++) {
+        let pos = bounds.min + i * delta;
+        let cost = calcSurfaceAreaCost(objStartIndex, objCount, axis, pos);
+        if(cost < bestCost) {
+          bestCost = cost;
+          bestPos = pos;
+          bestAxis = axis;
+        }
+      }
+    }
+  }
+  return { cost: bestCost, pos: bestPos, axis: bestAxis };
 }
 
 function findBestCostSplit(objStartIndex, objCount)
 {
   let bestCost = Number.MAX_VALUE;
-  let splitPos, splitAxis;
+  let bestPos, bestAxis;
   for(let axis=0; axis<3; axis++) {
     for(let i=0; i<objCount; i++) {
-      let center = getObjCenter(objStartIndex + i);
-      let cost = calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, center[axis]);
+      let center = getObjCenter(objStartIndex + i)[axis];
+      let cost = calcSurfaceAreaCost(objStartIndex, objCount, axis, center);
       if(cost < bestCost) {
         bestCost = cost;
-        splitPos = center[axis];
-        splitAxis = axis;
+        bestPos = center;
+        bestAxis = axis;
       }
     }
   }
-  return { cost: bestCost, pos: splitPos, axis: splitAxis };
+  return { cost: bestCost, pos: bestPos, axis: bestAxis };
 }
 
 function addBvhNode(objStartIndex, objCount)
 {
   let nodeAabb = initAabb(); 
-  for(let i=0; i<objCount; i++) {
-    let objAabb = getObjAabb(objStartIndex + i);
-    nodeAabb.min = vec3Min(nodeAabb.min, objAabb.min);
-    nodeAabb.max = vec3Max(nodeAabb.max, objAabb.max);
-  }
+  for(let i=0; i<objCount; i++)
+    nodeAabb = combineAabbs(nodeAabb, getObjAabb(objStartIndex + i));
+
   bvhNodes.push(...nodeAabb.min);
   bvhNodes.push(objStartIndex);
   bvhNodes.push(...nodeAabb.max);
@@ -315,8 +351,12 @@ function subdivideBvhNode(nodeIndex)
   let objCount = bvhNodes[nodeOfs + 7];
 
   // Calc split pos/axis with best cost and compare to no split cost
-  let split = findBestCostSplit(objStartIndex, objCount);
-  if(calcNodeCost(nodeIndex) <= split.cost)
+  //let split = findBestCostSplit(objStartIndex, objCount);
+  let split = findBestCostUniformSplit(objStartIndex, objCount);
+  let noSplitCost = bvhNodes[nodeOfs + 7] * calcAabbArea({
+    min: vec3FromArr(bvhNodes, nodeOfs),
+    max: vec3FromArr(bvhNodes, nodeOfs + 4) });
+  if(noSplitCost <= split.cost)
     return;
 
   // Partition objects to left and right according to split axis/pos
@@ -346,9 +386,9 @@ function subdivideBvhNode(nodeIndex)
 
   let leftChildIndex = bvhNodes.length / BVH_NODE_SIZE;
 
-  // Current node is not a leaf node, link child nodes
+  // Not a leaf node, so link left child node
   bvhNodes[nodeOfs + 3] = leftChildIndex;
-  bvhNodes[nodeOfs + 7] = 0; // Zero objects contained
+  bvhNodes[nodeOfs + 7] = 0; // obj count
 
   addBvhNode(objStartIndex, leftObjCount);
   addBvhNode(l, objCount - leftObjCount);
@@ -359,8 +399,10 @@ function subdivideBvhNode(nodeIndex)
 
 function createBvh()
 {
+  let start = performance.now();
   addBvhNode(0, objects.length / OBJECT_SIZE);
   subdivideBvhNode(0);
+  console.log("Create BVH: " + (performance.now() - start).toFixed(3) + " ms");
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -374,24 +416,26 @@ async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
   });
 }
 
-async function createRenderPipeline(shaderModule, pipelineLayout, vertexEntryPoint, fragmentEntryPoint)
+async function createRenderPipeline(shaderModule, pipelineLayout,
+  vertexEntry, fragmentEntry)
 {
   return device.createRenderPipelineAsync({
     layout: pipelineLayout,
     vertex: {
       module: shaderModule,
-      entryPoint: vertexEntryPoint
+      entryPoint: vertexEntry
     },
     fragment: {
       module: shaderModule,
-      entryPoint: fragmentEntryPoint,
+      entryPoint: fragmentEntry,
       targets: [{format: "bgra8unorm"}]
     },
     primitive: {topology: "triangle-strip"}
   });
 }
 
-function encodeComputePassAndSubmit(commandEncoder, pipeline, bindGroup, countX, countY, countZ)
+function encodeComputePassAndSubmit(commandEncoder, pipeline, bindGroup,
+  countX, countY, countZ)
 {
   const passEncoder = commandEncoder.beginComputePass();
   passEncoder.setPipeline(pipeline);
@@ -410,7 +454,8 @@ function encodeRenderPassAndSubmit(commandEncoder, pipeline, bindGroup, view)
   passEncoder.end();
 }
 
-async function createGpuResources(bvhNodesSize, objectsSize, shapesSize, materialsSize)
+async function createGpuResources(bvhNodesSize, objectsSize,
+  shapesSize, materialsSize)
 {
   globalsBuffer = device.createBuffer({
     size: 32 * 4,
@@ -449,39 +494,54 @@ async function createGpuResources(bvhNodesSize, objectsSize, shapesSize, materia
 
   let bindGroupLayout = device.createBindGroupLayout({
     entries: [ 
-      {binding: 0, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "uniform"}},
-      {binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: {type: "read-only-storage"}},
-      {binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: {type: "storage"}},
-      {binding: 6, visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT, buffer: {type: "storage"}}
+      { binding: 0, 
+        visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT,
+        buffer: {type: "uniform"} },
+      { binding: 1, 
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {type: "read-only-storage"} },
+      { binding: 2,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {type: "read-only-storage"} },
+      { binding: 3,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {type: "read-only-storage"}},
+      { binding: 4,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {type: "read-only-storage"}},
+      { binding: 5,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: {type: "storage"}},
+      { binding: 6,
+        visibility: GPUShaderStage.COMPUTE | GPUShaderStage.FRAGMENT,
+        buffer: {type: "storage"}}
     ]
   });
 
   bindGroup = device.createBindGroup({
     layout: bindGroupLayout,
     entries: [
-      {binding: 0, resource: {buffer: globalsBuffer}},
-      {binding: 1, resource: {buffer: bvhNodesBuffer}},
-      {binding: 2, resource: {buffer: objectsBuffer}},
-      {binding: 3, resource: {buffer: shapesBuffer}},
-      {binding: 4, resource: {buffer: materialsBuffer}},
-      {binding: 5, resource: {buffer: accumulationBuffer}},
-      {binding: 6, resource: {buffer: imageBuffer}}
+      { binding: 0, resource: { buffer: globalsBuffer } },
+      { binding: 1, resource: { buffer: bvhNodesBuffer } },
+      { binding: 2, resource: { buffer: objectsBuffer } },
+      { binding: 3, resource: { buffer: shapesBuffer } },
+      { binding: 4, resource: { buffer: materialsBuffer } },
+      { binding: 5, resource: { buffer: accumulationBuffer } },
+      { binding: 6, resource: { buffer: imageBuffer } }
     ]
   });
 
-  pipelineLayout = device.createPipelineLayout({bindGroupLayouts: [bindGroupLayout]});
+  pipelineLayout = device.createPipelineLayout(
+    { bindGroupLayouts: [bindGroupLayout] } );
 
-  renderPassDescriptor = {
-    colorAttachments: [{
-      undefined, // view
-      clearValue: {r: 1.0, g: 0.0, b: 0.0, a: 1.0},
-      loadOp: "clear",
-      storeOp: "store"
-    }]
-  };
+  renderPassDescriptor =
+    { colorAttachments: [
+      { undefined, // view
+        clearValue: {r: 1.0, g: 0.0, b: 0.0, a: 1.0},
+        loadOp: "clear",
+        storeOp: "store"
+      } ]
+    };
 
   await createPipelines();
 }
@@ -496,8 +556,11 @@ async function createPipelines()
 
   let shaderModule = device.createShaderModule({code: shaderCode});
 
-  computePipeline = await createComputePipeline(shaderModule, pipelineLayout, "computeMain");
-  renderPipeline = await createRenderPipeline(shaderModule, pipelineLayout, "vertexMain", "fragmentMain");
+  computePipeline = await createComputePipeline(
+    shaderModule, pipelineLayout, "computeMain");
+  
+  renderPipeline = await createRenderPipeline(
+    shaderModule, pipelineLayout, "vertexMain", "fragmentMain");
 }
 
 function copySceneData()
@@ -527,8 +590,11 @@ function copyViewData()
 
 function copyFrameData(time)
 {
-  device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array([
-    rand(), SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL), time, /* pad */ 0])); 
+  device.queue.writeBuffer(globalsBuffer, 4 * 4, new Float32Array(
+    [ rand(),
+      SAMPLES_PER_PIXEL / (gatheredSamples + SAMPLES_PER_PIXEL),
+      time, 
+      /* pad */ 0 ]));
 }
 
 let last;
@@ -552,8 +618,10 @@ function render(time)
   copyFrameData(time);
  
   let commandEncoder = device.createCommandEncoder();
-  encodeComputePassAndSubmit(commandEncoder, computePipeline, bindGroup, Math.ceil(CANVAS_WIDTH / 8), Math.ceil(CANVAS_HEIGHT / 8), 1);
-  encodeRenderPassAndSubmit(commandEncoder, renderPipeline, bindGroup, context.getCurrentTexture().createView());
+  encodeComputePassAndSubmit(commandEncoder, computePipeline, bindGroup,
+    Math.ceil(CANVAS_WIDTH / 8), Math.ceil(CANVAS_HEIGHT / 8), 1);
+  encodeRenderPassAndSubmit(commandEncoder, renderPipeline, bindGroup,
+    context.getCurrentTexture().createView());
   device.queue.submit([commandEncoder.finish()]);
 
   requestAnimationFrame(render);
@@ -585,7 +653,9 @@ function update(time)
     let speed = 0.3;
     let radius = 15;
     let height = 2.5;
-    setView([Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius], vec3Normalize(eye));
+    setView(
+      [ Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius ],
+      vec3Normalize(eye));
   }
 }
 
@@ -604,10 +674,14 @@ function updateView()
   pixelDeltaY = vec3Scale(viewportDown, 1 / CANVAS_HEIGHT);
 
   // viewportTopLeft = global.eye - global.focDist * global.fwd - 0.5 * (viewportRight + viewportDown);
-  let viewportTopLeft = vec3Add(eye, vec3Add(vec3Negate(vec3Scale(fwd, focDist)), vec3Negate(vec3Scale(vec3Add(viewportRight, viewportDown), 0.5))));
+  let viewportTopLeft = vec3Add(eye, 
+    vec3Add(
+      vec3Negate(vec3Scale(fwd, focDist)), 
+      vec3Negate(vec3Scale(vec3Add(viewportRight, viewportDown), 0.5))));
 
   // pixelTopLeft = viewportTopLeft + 0.5 * (v.pixelDeltaX + v.pixelDeltaY)
-  pixelTopLeft = vec3Add(viewportTopLeft, vec3Scale(vec3Add(pixelDeltaX, pixelDeltaY), 0.5)); 
+  pixelTopLeft = vec3Add(viewportTopLeft, 
+    vec3Scale(vec3Add(pixelDeltaX, pixelDeltaY), 0.5)); 
 
   copyViewData();
   resetAccumulationBuffer();
