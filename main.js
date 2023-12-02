@@ -29,8 +29,7 @@ const SHAPE_TYPE_SPHERE = 0;
 const SHAPE_TYPE_PLANE = 1;
 const SHAPE_TYPE_BOX = 2;
 const SHAPE_TYPE_CYLINDER = 3;
-const
- SHAPE_TYPE_MESH = 4;
+const SHAPE_TYPE_MESH = 4;
 
 const MAT_TYPE_LAMBERT = 0;
 const MAT_TYPE_METAL = 1;
