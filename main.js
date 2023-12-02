@@ -200,81 +200,112 @@ function addGlass(albedo, refractionIndex)
   return materials.length / MAT_LINE_SIZE - 1;
 }
 
-function calcAabbArea(minExtent, maxExtent)
+function getObjCenter(objIndex)
 {
-  let d = vec3Add(maxExtent, vec3Negate(minExtent));
+  let objOfs = objIndex * OBJECT_SIZE;
+  switch(objects[objOfs]) {
+    case SHAPE_TYPE_SPHERE:
+      return vec3FromArr(shapes, objects[objOfs + 1] * SHAPE_LINE_SIZE);
+    default:
+      alert("Unknown shape type while retrieving object center");
+  }
+  return undefined;
+}
+
+function getObjAabb(objIndex)
+{
+  let objOfs = objIndex * OBJECT_SIZE;
+  switch(objects[objOfs]) {
+    case SHAPE_TYPE_SPHERE:
+      let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE; 
+      let center = vec3FromArr(shapes, shapeOfs);
+      let radius = shapes[shapeOfs + 3];
+      return { 
+        min: vec3Add(center, [-radius, -radius, -radius]),
+        max: vec3Add(center, [radius, radius, radius]) };
+    default:
+      alert("Unknown shape type while retrieving object center");
+  }
+  return undefined;
+}
+
+function initAabb()
+{
+  return {
+    min: [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE],
+    max: [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE] };
+}
+
+function calcAabbArea(aabb)
+{
+  let d = vec3Add(aabb.max, vec3Negate(aabb.min));
   return d[0] * d[1] + d[1] * d[2] + d[2] * d[0];
+}
+
+function calcNodeCost(nodeIndex)
+{  
+  let nodeOfs = nodeIndex * BVH_NODE_SIZE;
+  return bvhNodes[nodeOfs + 7] * calcAabbArea(
+    { min: vec3FromArr(bvhNodes, nodeOfs), 
+      max: vec3FromArr(bvhNodes, nodeOfs + 4) });
 }
 
 function calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, pos)
 {
-  let leftAabbMin = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
-  let leftAabbMax = [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE];
-  let rightAabbMin = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
-  let rightAabbMax = [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE];
+  let leftAabb = initAabb();
+  let rightAabb = initAabb();
 
   let leftCount = 0;
   let rightCount = 0;
 
   for(let i=0; i<objCount; i++) {
-    let objOfs = (objStartIndex + i) * OBJECT_SIZE;
-    switch(objects[objOfs]) {
-      case SHAPE_TYPE_SPHERE:
-        let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE; 
-        let center = vec3FromArr(shapes, shapeOfs);
-        let radius = shapes[shapeOfs + 3];
-        if(center[axis] < pos) {
-          leftAabbMin = vec3Min(leftAabbMin, vec3Add(center, [-radius, -radius, -radius]));
-          leftAabbMax = vec3Max(leftAabbMax, vec3Add(center, [radius, radius, radius]));
-          leftCount++;
-        } else {
-          rightAabbMin = vec3Min(rightAabbMin, vec3Add(center, [-radius, -radius, -radius]));
-          rightAabbMax = vec3Max(rightAabbMax, vec3Add(center, [radius, radius, radius]));
-          rightCount++;
-        }
-        break;
-      default:
-        alert("Unknown shape type while calculuating SAH");
+    let center = getObjCenter(objStartIndex + i);
+    let aabb = getObjAabb(objStartIndex + i);
+    if(center[axis] < pos) {
+      leftAabb.min = vec3Min(leftAabb.min, aabb.min);
+      leftAabb.max = vec3Max(leftAabb.max, aabb.max);
+      leftCount++;
+    } else {
+      rightAabb.min = vec3Min(rightAabb.min, aabb.min);
+      rightAabb.max = vec3Max(rightAabb.max, aabb.max);
+      rightCount++;
     }
   }
 
-  return (leftCount > 0 && rightCount > 0) ?
-    leftCount * calcAabbArea(leftAabbMin, leftAabbMax) + rightCount * calcAabbArea(rightAabbMin, rightAabbMax) :
-    Number.MAX_VALUE;
+  let cost = leftCount * calcAabbArea(leftAabb) + rightCount * calcAabbArea(rightAabb);
+  return cost > 0 ? cost : Number.MAX_VALUE;
 }
 
-function addBvhNode(nodeIndex, objStartIndex, objCount)
+function findBestCostSplit(objStartIndex, objCount)
 {
-  console.log("nodeIndex: " + nodeIndex);
-  console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
-
-  let aabbMin = [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE];
-  let aabbMax = [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE];
-
-  for(let i=0; i<objCount; i++) {
-    let objOfs = (objStartIndex + i) * OBJECT_SIZE;
-    switch(objects[objOfs]) {
-      case SHAPE_TYPE_SPHERE:
-        let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE; 
-        let center = vec3FromArr(shapes, shapeOfs);
-        let radius = shapes[shapeOfs + 3];
-        aabbMin = vec3Min(aabbMin, vec3Add(center, [-radius, -radius, -radius]));
-        aabbMax = vec3Max(aabbMax, vec3Add(center, [radius, radius, radius]));
-        console.log("objIndex: " + (objStartIndex + i) + ", objOfs: " + objOfs + ", center: " + center + ", radius:" + radius);
-        console.log("aabbMin: " + aabbMin + " / " + aabbMax);
-        break;
-      default:
-        alert("Unknown shape type while updating bvh node AABB");
+  let bestCost = Number.MAX_VALUE;
+  let splitPos, splitAxis;
+  for(let axis=0; axis<3; axis++) {
+    for(let i=0; i<objCount; i++) {
+      let center = getObjCenter(objStartIndex + i);
+      let cost = calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, center[axis]);
+      if(cost < bestCost) {
+        bestCost = cost;
+        splitPos = center[axis];
+        splitAxis = axis;
+      }
     }
   }
+  return { cost: bestCost, pos: splitPos, axis: splitAxis };
+}
 
-  bvhNodes.push(...aabbMin);
+function addBvhNode(objStartIndex, objCount)
+{
+  let nodeAabb = initAabb(); 
+  for(let i=0; i<objCount; i++) {
+    let objAabb = getObjAabb(objStartIndex + i);
+    nodeAabb.min = vec3Min(nodeAabb.min, objAabb.min);
+    nodeAabb.max = vec3Max(nodeAabb.max, objAabb.max);
+  }
+  bvhNodes.push(...nodeAabb.min);
   bvhNodes.push(objStartIndex);
-  bvhNodes.push(...aabbMax);
+  bvhNodes.push(...nodeAabb.max);
   bvhNodes.push(objCount);
-
-  console.log("nodeBounds: " + aabbMin + " / " + aabbMax);
-  console.log("----");
 }
 
 function subdivideBvhNode(nodeIndex)
@@ -283,52 +314,21 @@ function subdivideBvhNode(nodeIndex)
   let objStartIndex = bvhNodes[nodeOfs + 3];
   let objCount = bvhNodes[nodeOfs + 7];
 
-  // Split via suface area heuristic
-  let bestCost = Number.MAX_VALUE;
-  for(let axis=0; axis<3; axis++) {
-    for(let i=0; i<objCount; i++) {
-      let objOfs = (objStartIndex + i) * OBJECT_SIZE;
-      switch(objects[objOfs]) {
-        case SHAPE_TYPE_SPHERE:
-          let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE;
-          let pos = shapes[shapeOfs + axis];
-          let cost = calcSurfaceAreaHeuristic(objStartIndex, objCount, axis, pos);
-          if(cost < bestCost) {
-            bestCost = cost;
-            splitPos = pos;
-            splitAxis = axis;
-          }
-          break;
-        default:
-          alert("Unknown shape type while calculating split position");
-      }
-    }
-  }
-
-  let parentCost = objCount * calcAabbArea(vec3FromArr(bvhNodes, nodeOfs), vec3FromArr(bvhNodes, nodeOfs + 4));
-  if(parentCost <= bestCost)
+  // Calc split pos/axis with best cost and compare to no split cost
+  let split = findBestCostSplit(objStartIndex, objCount);
+  if(calcNodeCost(nodeIndex) <= split.cost)
     return;
 
   // Partition objects to left and right according to split axis/pos
   let l = objStartIndex;
   let r = objStartIndex + objCount - 1;
-
-  // Split objects in left side and right side given by their center
   while(l <= r) {
-    let leftObjOfs = l * OBJECT_SIZE;
-    let center;
-    switch(objects[leftObjOfs]) {
-      case SHAPE_TYPE_SPHERE:
-        let shapeOfs = objects[leftObjOfs + 1] * SHAPE_LINE_SIZE;
-        center = shapes[shapeOfs + splitAxis];
-        break;
-      default:
-        alert("Unknown shape type while subdividing bvh node");
-    }
-    if(center < splitPos)
+    let center = getObjCenter(l);
+    if(center[split.axis] < split.pos) {
       l++;
-    else {
+    } else {
       // Swap object data l/r
+      let leftObjOfs = l * OBJECT_SIZE;
       let rightObjOfs = r * OBJECT_SIZE;
       for(let i=0; i<OBJECT_SIZE; i++) {
         let t = objects[leftObjOfs + i];
@@ -344,24 +344,22 @@ function subdivideBvhNode(nodeIndex)
   if(leftObjCount == 0 || leftObjCount == objCount)
     return;
 
-  // Child node indices, right child index is implicit
   let leftChildIndex = bvhNodes.length / BVH_NODE_SIZE;
-  let rightChildIndex = leftChildIndex + 1;
 
   // Current node is not a leaf node, link child nodes
   bvhNodes[nodeOfs + 3] = leftChildIndex;
   bvhNodes[nodeOfs + 7] = 0; // Zero objects contained
 
-  addBvhNode(leftChildIndex, objStartIndex, leftObjCount);
-  addBvhNode(rightChildIndex, l, objCount - leftObjCount);
+  addBvhNode(objStartIndex, leftObjCount);
+  addBvhNode(l, objCount - leftObjCount);
 
   subdivideBvhNode(leftChildIndex);
-  subdivideBvhNode(rightChildIndex);
+  subdivideBvhNode(leftChildIndex + 1); // right child
 }
 
 function createBvh()
 {
-  addBvhNode(0, 0, objects.length / OBJECT_SIZE);
+  addBvhNode(0, objects.length / OBJECT_SIZE);
   subdivideBvhNode(0);
 }
 
