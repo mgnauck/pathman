@@ -10,6 +10,8 @@ const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
 const TEMPORAL_WEIGHT = 0.1;
 
+const BVH_INTERVAL_COUNT = 8;
+
 const MOVE_VELOCITY = 0.05;
 const LOOK_VELOCITY = 0.025;
 
@@ -252,8 +254,8 @@ function getObjAabb(objIndex)
 function initAabb()
 {
   return {
-    min: [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE],
-    max: [Number.MIN_VALUE, Number.MIN_VALUE, Number.MIN_VALUE] };
+    min: [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+    max: [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY] };
 }
 
 function combineAabbs(a, b)
@@ -269,7 +271,7 @@ function calcAabbArea(aabb)
 
 function calcCenterBounds(objStartIndex, objCount, axis)
 {
-  let min = Number.MAX_VALUE, max = Number.MIN_VALUE;
+  let min = Number.POSITIVE_INFINITY, max = Number.NEGATIVE_INFINITY;
   for(let i=0; i<objCount; i++) {
     let center = getObjCenter(objStartIndex + i)[axis];
     min = Math.min(min, center);
@@ -280,19 +282,14 @@ function calcCenterBounds(objStartIndex, objCount, axis)
 
 function findBestCostIntervalSplit(objStartIndex, objCount, intervalCount)
 {
-  //console.log("--- best cost interval split ---");
-
-  let bestCost = Number.MAX_VALUE;
+  let bestCost = Number.POSITIVE_INFINITY;
   let bestPos, bestAxis;
 
   for(let axis=0; axis<3; axis++) {
-    //console.log("--- AXIS " + axis);
     // Calculate bounds of object centers
     let bounds = calcCenterBounds(objStartIndex, objCount, axis);
-    if(Math.abs(bounds.max - bounds.min) < Number.EPSILON) {
-      //console.log("Skipping axis");
+    if(Math.abs(bounds.max - bounds.min) < Number.EPSILON)
       continue;
-    }
 
     // Initialize empty intervals
     let intervals = [];
@@ -303,15 +300,9 @@ function findBestCostIntervalSplit(objStartIndex, objCount, intervalCount)
     let delta = intervalCount / (bounds.max - bounds.min);
     for(let i=0; i<objCount; i++) {
       let center = getObjCenter(objStartIndex + i);
-      //console.log("obj index: " + (objStartIndex + i) + ", center: " + center + ", radius: " + getObjRadius(objStartIndex + i));
-      let intervalIndex = Math.min(intervalCount - 1, Math.floor((center[axis] - bounds.min) * delta) >>> 0);
-      //console.log("intervalIndex: " + intervalIndex);
-      //console.log(intervalIndex + "> before aabb: " + intervals[intervalIndex].aabb.min + " / " + intervals[intervalIndex].aabb.max);
+      let intervalIndex = Math.min(intervalCount - 1, (center[axis] - bounds.min) * delta) >>> 0;
       intervals[intervalIndex].aabb = combineAabbs(intervals[intervalIndex].aabb, getObjAabb(objStartIndex + i));
-      //console.log(intervalIndex + "> after aabb: " + intervals[intervalIndex].aabb.min + " / " + intervals[intervalIndex].aabb.max);
-      //console.log(intervalIndex + "> before count: " + intervals[intervalIndex].count);
       intervals[intervalIndex].count++;
-      //console.log(intervalIndex + "> after count: " + intervals[intervalIndex].count);
     }
 
     // Calculate left/right area and count for each plane separating the intervals
@@ -349,48 +340,6 @@ function findBestCostIntervalSplit(objStartIndex, objCount, intervalCount)
   return { cost: bestCost, pos: bestPos, axis: bestAxis };
 }
 
-/*function calcSurfaceAreaCost(objStartIndex, objCount, axis, pos)
-{
-  let leftAabb = initAabb();
-  let rightAabb = initAabb();
-
-  let leftCount = 0;
-  let rightCount = 0;
-
-  for(let i=0; i<objCount; i++) {
-    let objIndex = objStartIndex + i;
-    if(getObjCenter(objIndex)[axis] < pos) {
-      leftAabb = combineAabbs(leftAabb, getObjAabb(objIndex));
-      leftCount++;
-    } else {
-      rightAabb = combineAabbs(rightAabb, getObjAabb(objIndex));
-      rightCount++;
-    }
-  }
-
-  let cost = leftCount * calcAabbArea(leftAabb) +
-    rightCount * calcAabbArea(rightAabb);
-  return cost > 0 ? cost : Number.MAX_VALUE;
-}
-
-function findBestCostObjCenterSplit(objStartIndex, objCount)
-{
-  let bestCost = Number.MAX_VALUE;
-  let bestPos, bestAxis;
-  for(let axis=0; axis<3; axis++) {
-    for(let i=0; i<objCount; i++) {
-      let center = getObjCenter(objStartIndex + i)[axis];
-      let cost = calcSurfaceAreaCost(objStartIndex, objCount, axis, center);
-      if(cost < bestCost) {
-        bestCost = cost;
-        bestPos = center;
-        bestAxis = axis;
-      }
-    }
-  }
-  return { cost: bestCost, pos: bestPos, axis: bestAxis };
-}*/
-
 function addBvhNode(objStartIndex, objCount)
 {
   let nodeAabb = initAabb(); 
@@ -406,15 +355,11 @@ function addBvhNode(objStartIndex, objCount)
 function subdivideBvhNode(nodeIndex)
 {
   let nodeOfs = nodeIndex * BVH_NODE_SIZE;
-  let objStartIndex = bvhNodes[nodeOfs + 3];
   let objCount = bvhNodes[nodeOfs + 7];
-
-  //if(objCount <= 3)
-  //  return;
+  let objStartIndex = bvhNodes[nodeOfs + 3];
 
   // Calc split pos/axis with best cost and compare to no split cost
-  //let split = findBestCostObjCenterSplit(objStartIndex, objCount);
-  let split = findBestCostIntervalSplit(objStartIndex, objCount, 8);
+  let split = findBestCostIntervalSplit(objStartIndex, objCount, BVH_INTERVAL_COUNT);
   let noSplitCost = bvhNodes[nodeOfs + 7] * calcAabbArea({
     min: vec3FromArr(bvhNodes, nodeOfs), max: vec3FromArr(bvhNodes, nodeOfs + 4) });
   if(noSplitCost <= split.cost)
@@ -439,7 +384,7 @@ function subdivideBvhNode(nodeIndex)
       r--;
     }
   }
- 
+
   // Stop if one side is empty
   let leftObjCount = l - objStartIndex;
   if(leftObjCount == 0 || leftObjCount == objCount)
