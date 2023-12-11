@@ -26,8 +26,8 @@ struct Ray
 {
   ori: vec3f,
   dir: vec3f,
-  t: f32,
-  invDir: vec3f
+  invDir: vec3f,
+  t: f32
 }
 
 struct BvhNode
@@ -50,7 +50,6 @@ struct Hit
 {
   pos: vec3f,
   nrm: vec3f,
-  inside: bool,
   matType: u32,
   matIndex: u32
 }
@@ -77,7 +76,7 @@ const MAT_TYPE_GLASS = 3;
 @group(0) @binding(5) var<storage, read_write> buffer: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> image: array<vec4f>;
 
-var<private> nodeStack: array<u32, 64>; // Fixed size
+var<private> nodeStack: array<u32, 32>; // Fixed size
 var<private> rngState: u32;
 
 // https://jcgt.org/published/0009/03/02/
@@ -185,24 +184,24 @@ fn completeHitSphere(ray: Ray, center: vec3f, radius: f32, h: ptr<function, Hit>
 {
   (*h).pos = ray.ori + ray.t * ray.dir;
   (*h).nrm = ((*h).pos - center) / radius;
-  (*h).inside = dot(ray.dir, (*h).nrm) > 0;
-  (*h).nrm *= select(1.0, -1.0, (*h).inside); 
 }
 
 fn evalMaterialLambert(in: Ray, h: Hit, albedo: vec3f, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  let dir = h.nrm + rand3UnitSphere(); 
-  *outDir = select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON)));
+  let nrm = select(h.nrm, -h.nrm, dot(in.dir, h.nrm) > 0);
+  let dir = nrm + rand3UnitSphere(); 
+  *outDir = select(normalize(dir), nrm, all(abs(dir) < vec3f(EPSILON)));
   *outCol = albedo;
   return true;
 }
 
 fn evalMaterialMetal(in: Ray, h: Hit, albedo: vec3f, fuzzRadius: f32, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  let dir = reflect(in.dir, h.nrm);
+  let nrm = select(h.nrm, -h.nrm, dot(in.dir, h.nrm) > 0);
+  let dir = reflect(in.dir, nrm);
   *outDir = normalize(dir + fuzzRadius * rand3UnitSphere());
   *outCol = albedo;
-  return dot(*outDir, h.nrm) > 0;
+  return dot(*outDir, nrm) > 0;
 }
 
 fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
@@ -214,21 +213,23 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
 
 fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
-  let refracIndexRatio = select(1 / refractionIndex, refractionIndex, h.inside);
+  let inside = dot(in.dir, h.nrm) > 0;
+  let nrm = select(h.nrm, -h.nrm, inside);
+  let refracIndexRatio = select(1 / refractionIndex, refractionIndex, inside);
   
-  let cosTheta = min(dot(-in.dir, h.nrm), 1);
+  let cosTheta = min(dot(-in.dir, nrm), 1);
   /*let sinTheta = sqrt(1 - cosTheta * cosTheta);
 
   var dir: vec3f;
   if(refracIndexRatio * sinTheta > 1 || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
-    dir = reflect(in.dir, h.nrm);
+    dir = reflect(in.dir, nrm);
   } else {
-    dir = refract(in.dir, h.nrm, refracIndexRatio);
+    dir = refract(in.dir, nrm, refracIndexRatio);
   }*/
 
-  var dir = refract(in.dir, h.nrm, refracIndexRatio);
+  var dir = refract(in.dir, nrm, refracIndexRatio);
   if(all(dir == vec3f(0)) || schlickReflectance(cosTheta, refracIndexRatio) > rand()) {
-    dir = reflect(in.dir, h.nrm);
+    dir = reflect(in.dir, nrm);
   }
 
   *outDir = dir;
@@ -239,7 +240,7 @@ fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, outCo
 fn evalMaterial(in: Ray, h: Hit, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let data = materials[h.matIndex];
-  switch(u32(h.matType))
+  switch(h.matType)
   {
     case MAT_TYPE_LAMBERT: {
       return evalMaterialLambert(in, h, data.xyz, outCol, outDir);

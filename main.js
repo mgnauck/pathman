@@ -8,7 +8,7 @@ const ACTIVE_SCENE = "RIOW";
 
 const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
-const TEMPORAL_WEIGHT = 0.1;
+const TEMPORAL_WEIGHT = 0.5;
 
 const BVH_INTERVAL_COUNT = 8;
 
@@ -657,8 +657,8 @@ function update(time)
 {
   if(orbitCam) {
     let speed = 0.3;
-    let radius = 15;
-    let height = 2.5;
+    let radius = (ACTIVE_SCENE == "TEST") ? 2 : 15;
+    let height = (ACTIVE_SCENE == "TEST") ? 0.5 : 2.5;
     setView(
       [ Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius ],
       vec3Normalize(eye));
