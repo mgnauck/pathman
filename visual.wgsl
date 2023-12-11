@@ -154,7 +154,6 @@ fn intersectAabb(ray: Ray, minExt: vec3f, maxExt: vec3f) -> f32
   let tmin = maxComp(min(t0, t1));
   let tmax = minComp(max(t0, t1));
   
-  // Does not handle case tmin < 0 && tmax as result
   return select(MAX_DISTANCE, tmin, tmin <= tmax && tmin < ray.t && tmax > 0);
 }
 
@@ -190,19 +189,19 @@ fn completeHitSphere(ray: Ray, center: vec3f, radius: f32, h: ptr<function, Hit>
   (*h).nrm *= select(1.0, -1.0, (*h).inside); 
 }
 
-fn evalMaterialLambert(in: Ray, h: Hit, albedo: vec3f, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
+fn evalMaterialLambert(in: Ray, h: Hit, albedo: vec3f, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let dir = h.nrm + rand3UnitSphere(); 
   *outDir = select(normalize(dir), h.nrm, all(abs(dir) < vec3f(EPSILON)));
-  *att = albedo;
+  *outCol = albedo;
   return true;
 }
 
-fn evalMaterialMetal(in: Ray, h: Hit, albedo: vec3f, fuzzRadius: f32, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
+fn evalMaterialMetal(in: Ray, h: Hit, albedo: vec3f, fuzzRadius: f32, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let dir = reflect(in.dir, h.nrm);
   *outDir = normalize(dir + fuzzRadius * rand3UnitSphere());
-  *att = albedo;
+  *outCol = albedo;
   return dot(*outDir, h.nrm) > 0;
 }
 
@@ -213,7 +212,7 @@ fn schlickReflectance(cosTheta: f32, refractionIndexRatio: f32) -> f32
   return r0 + (1 - r0) * pow(1 - cosTheta, 5);
 }
 
-fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
+fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let refracIndexRatio = select(1 / refractionIndex, refractionIndex, h.inside);
   
@@ -233,28 +232,27 @@ fn evalMaterialGlass(in: Ray, h: Hit, albedo: vec3f, refractionIndex: f32, att: 
   }
 
   *outDir = dir;
-  *att = albedo;
+  *outCol = albedo;
   return true;
 }
 
-fn evalMaterial(in: Ray, h: Hit, att: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
+fn evalMaterial(in: Ray, h: Hit, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
+  let data = materials[h.matIndex];
   switch(u32(h.matType))
   {
     case MAT_TYPE_LAMBERT: {
-      let data = materials[h.matIndex];
-      return evalMaterialLambert(in, h, data.xyz, att, outDir);
+      return evalMaterialLambert(in, h, data.xyz, outCol, outDir);
     }
     case MAT_TYPE_METAL: {
-      let data = materials[h.matIndex];
-      return evalMaterialMetal(in, h, data.xyz, data.w, att, outDir);
+      return evalMaterialMetal(in, h, data.xyz, data.w, outCol, outDir);
     }
     case MAT_TYPE_GLASS: {
-      let data = materials[h.matIndex];
-      return evalMaterialGlass(in, h, data.xyz, data.w, att, outDir);
+      return evalMaterialGlass(in, h, data.xyz, data.w, outCol, outDir);
     }
     default: {
-      // TODO Have some error material that outputs red
+      // Error material
+      *outCol = vec3f(99999, 0, 0);
       return false;
     }
   }
@@ -264,9 +262,9 @@ fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, 
 { 
   for(var i=objStartIndex; i<objStartIndex + objCount; i++) {
     let obj = &objects[i];
+    let data = shapes[(*obj).shapeIndex];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
-        let data = shapes[(*obj).shapeIndex];
         var currDist = intersectSphere(*ray, data.xyz, data.w);
         if(currDist < (*ray).t) {
           (*ray).t = currDist;
@@ -334,9 +332,9 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
 
   if((*ray).t < MAX_DISTANCE) {
     let obj = &objects[objId];
+    let data = shapes[(*obj).shapeIndex];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
-        let data = shapes[(*obj).shapeIndex];
         completeHitSphere(*ray, data.xyz, data.w, hit);
       }
       case SHAPE_TYPE_PLANE: {
@@ -347,8 +345,7 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
       }
     }
     (*hit).matType = (*obj).matType;
-    (*hit).matIndex = (*obj).matIndex;
-    
+    (*hit).matIndex = (*obj).matIndex; 
     return true;
   }
 
@@ -366,9 +363,8 @@ fn render(initialRay: Ray) -> vec3f
   var ray = initialRay;
   var col = vec3f(1);
   var bounce = 0u;
-  var hit: Hit;
-
   loop {
+    var hit: Hit;
     if(intersectScene(&ray, &hit)) {
       var att: vec3f;
       var newDir: vec3f;
@@ -376,14 +372,12 @@ fn render(initialRay: Ray) -> vec3f
         col *= att;
         ray = createRay(hit.pos, newDir, MAX_DISTANCE);
       } else {
-        // Material does not contribute to final color
         break;
       }
     } else {
       col *= sampleBackground(ray);
       break;
     }
-
     bounce += 1;
     if(bounce >= globals.maxBounces) {
       break;
