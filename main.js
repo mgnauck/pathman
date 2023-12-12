@@ -146,10 +146,9 @@ function vec3Length(v)
 function vec3FromSpherical(theta, phi)
 {
   return [
-    // Spherical coordinate axis flipped to accommodate X=right/Y=up
-    Math.sin(theta) * Math.sin(phi),
-    Math.cos(theta),
-    Math.sin(theta) * Math.cos(phi)];
+    -Math.cos(phi) * Math.sin(theta),
+    -Math.cos(theta),
+    Math.sin(phi) * Math.sin(theta)];
 }
 
 function vec3Min(a, b)
@@ -698,8 +697,8 @@ function setView(lookFrom, lookAt)
   eye = lookFrom;
   fwd = vec3Normalize(vec3Add(lookFrom, vec3Negate(lookAt)));
 
-  theta = Math.acos(fwd[1]);
-  phi = Math.acos(fwd[2] / Math.sqrt(fwd[0] * fwd[0] + fwd[2] * fwd[2]));
+  theta = Math.acos(-fwd[1]);
+  phi = Math.atan2(-fwd[2], fwd[0]) + Math.PI;
 
   updateView();
 }
@@ -766,7 +765,7 @@ function handleKeyEvent(e)
 
 function handleCameraMouseMoveEvent(e)
 { 
-  theta = Math.min(Math.max(theta - e.movementY * LOOK_VELOCITY, 0.01), 0.99 * Math.PI);
+  theta = Math.min(Math.max(theta + e.movementY * LOOK_VELOCITY, 0.01), 0.99 * Math.PI);
   
   phi = (phi - e.movementX * LOOK_VELOCITY) % (2 * Math.PI);
   phi += (phi < 0) ? 2.0 * Math.PI : 0;
