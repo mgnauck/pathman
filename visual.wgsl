@@ -59,9 +59,9 @@ const PI = 3.141592;
 const MAX_DISTANCE = 3.402823466e+38;
 
 const SHAPE_TYPE_SPHERE = 1;
-const SHAPE_TYPE_PLANE = 2;
-const SHAPE_TYPE_BOX = 3;
-const SHAPE_TYPE_CYLINDER = 4;
+const SHAPE_TYPE_BOX = 2;
+const SHAPE_TYPE_CYLINDER = 3;
+const SHAPE_TYPE_QUAD = 4;
 const SHAPE_TYPE_MESH = 5;
 
 const MAT_TYPE_LAMBERT = 1;
@@ -272,7 +272,10 @@ fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, 
           *objId = i;
         }
       }
-      case SHAPE_TYPE_PLANE: {
+      case SHAPE_TYPE_QUAD: {
+        return;
+      }
+      case SHAPE_TYPE_MESH: {
         return;
       }
       default: {
@@ -338,7 +341,10 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
       case SHAPE_TYPE_SPHERE: {
         completeHitSphere(*ray, data.xyz, data.w, hit);
       }
-      case SHAPE_TYPE_PLANE: {
+      case SHAPE_TYPE_QUAD: {
+        return false;
+      }
+      case SHAPE_TYPE_MESH: {
         return false;
       }
       default: {

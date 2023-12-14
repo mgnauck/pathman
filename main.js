@@ -30,9 +30,9 @@ const SHAPE_LINE_SIZE = 4;
 const MAT_LINE_SIZE = 4;
 
 const SHAPE_TYPE_SPHERE = 1;
-const SHAPE_TYPE_PLANE = 2;
-const SHAPE_TYPE_BOX = 3;
-const SHAPE_TYPE_CYLINDER = 4;
+const SHAPE_TYPE_BOX = 2;
+const SHAPE_TYPE_CYLINDER = 3;
+const SHAPE_TYPE_QUAD = 4;
 const SHAPE_TYPE_MESH = 5;
 
 const MAT_TYPE_LAMBERT = 1;
@@ -181,11 +181,20 @@ function addSphere(center, radius)
   return shapes.length / SHAPE_LINE_SIZE - 1
 }
 
-function addPlane(normal, dist)
+function addQuad(q, u, v)
 {
-  shapes.push(...normal);
-  shapes.push(dist);
-  return shapes.length / SHAPE_LINE_SIZE - 1
+  shapes.push(...q);
+  shapes.push(0); // pad
+  shapes.push(...u);
+  shapes.push(0); // pad
+  shapes.push(...v);
+  shapes.push(0); // pad
+  return shapes.length / SHAPE_LINE_SIZE - 3
+}
+
+function addMesh()
+{
+  // TODO
 }
 
 function addLambert(albedo)
@@ -213,22 +222,18 @@ function getObjCenter(objIndex)
 {
   let objOfs = objIndex * OBJECT_SIZE;
   switch(objects[objOfs]) {
-    case SHAPE_TYPE_SPHERE:
+    case SHAPE_TYPE_SPHERE: {
       return vec3FromArr(shapes, objects[objOfs + 1] * SHAPE_LINE_SIZE);
+    }
+    case SHAPE_TYPE_QUAD: {
+      let shapeOfs = objects[objOfs + 1];
+      let q = vec3FromArr(shapes, shapeOfs * SHAPE_LINE_SIZE);
+      let u = vec3FromArr(shapes, (shapeOfs + 1) * SHAPE_LINE_SIZE);
+      let v = vec3FromArr(shapes, (shapeOfs + 2) * SHAPE_LINE_SIZE);
+      return vec3Add(vec3Add(q, vec3Scale(u, 0.5)), vec3Scale(v, 0.5));
+    }
     default:
       alert("Unknown shape type while retrieving object center");
-  }
-  return undefined;
-}
-
-function getObjRadius(objIndex)
-{
-  let objOfs = objIndex * OBJECT_SIZE;
-  switch(objects[objOfs]) {
-    case SHAPE_TYPE_SPHERE:
-      return shapes[objects[objOfs + 1] * SHAPE_LINE_SIZE + 3];
-    default:
-      alert("Unknown shape type while retrieving object radius");
   }
   return undefined;
 }
@@ -237,13 +242,26 @@ function getObjAabb(objIndex)
 {
   let objOfs = objIndex * OBJECT_SIZE;
   switch(objects[objOfs]) {
-    case SHAPE_TYPE_SPHERE:
+    case SHAPE_TYPE_SPHERE: {
       let shapeOfs = objects[objOfs + 1] * SHAPE_LINE_SIZE; 
       let center = vec3FromArr(shapes, shapeOfs);
       let radius = shapes[shapeOfs + 3];
       return { 
         min: vec3Add(center, [-radius, -radius, -radius]),
         max: vec3Add(center, [radius, radius, radius]) };
+    }
+    case SHAPE_TYPE_QUAD: {
+      let shapeOfs = objects[objOfs + 1];
+      let q = vec3FromArr(shapes, shapeOfs * SHAPE_LINE_SIZE);
+      let u = vec3FromArr(shapes, (shapeOfs + 1) * SHAPE_LINE_SIZE);
+      let v = vec3FromArr(shapes, (shapeOfs + 2) * SHAPE_LINE_SIZE);
+      let aabb = initAabb();
+      growAabb(aabb, q);
+      growAabb(aabb, vec3Add(q, u));
+      growAabb(aabb, vec3Add(q, v));
+      growAabb(aabb, vec3Add(vec3Add(q, u), v));
+      return aabb;
+    }
     default:
       alert("Unknown shape type while retrieving object center");
   }
@@ -260,6 +278,12 @@ function initAabb()
 function combineAabbs(a, b)
 {
   return { min: vec3Min(a.min, b.min), max: vec3Max(a.max, b.max) };
+}
+
+function growAabb(aabb, v)
+{
+  aabb.min = vec3Min(aabb.min, v);
+  aabb.max = vec3Max(aabb.max, v);
 }
 
 function calcAabbArea(aabb)
