@@ -8,12 +8,12 @@ const ACTIVE_SCENE = "RIOW";
 
 const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
-const TEMPORAL_WEIGHT = 0.5;
+const TEMPORAL_WEIGHT = 0.1;
 
 const BVH_INTERVAL_COUNT = 8;
 
-const MOVE_VELOCITY = 0.05;
-const LOOK_VELOCITY = 0.025;
+const MOVE_VELOCITY = 0.1;
+const LOOK_VELOCITY = 0.015;
 
 // Size of a bvh node
 // aabb min ext, (object/node) start index, aabb max ext, object count
