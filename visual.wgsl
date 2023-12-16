@@ -186,6 +186,41 @@ fn completeHitSphere(ray: Ray, center: vec3f, radius: f32, h: ptr<function, Hit>
   (*h).nrm = ((*h).pos - center) / radius;
 }
 
+fn intersectQuad(ray: Ray, q: vec3f, u: vec3f, v: vec3f) -> f32
+{
+  let n = cross(u, v);
+  let nrm = normalize(n);
+  let denom = dot(nrm, ray.dir);
+
+  if(abs(denom) < EPSILON) {
+    return MAX_DISTANCE;
+  }
+
+  let d = dot(nrm, q);
+  let t = (d - dot(nrm, ray.ori)) / denom;
+  if(t < EPSILON || t > ray.t) {
+    return MAX_DISTANCE;
+  }
+
+  let w = n / dot(n, n);
+  let pos = ray.ori + t * ray.dir;
+  let planar = pos - q;
+  let a = dot(w, cross(planar, v));
+  let b = dot(w, cross(u, planar));
+
+  if(a < 0 || 1 < a || b < 0 || 1 < b) {
+    return MAX_DISTANCE;
+  }
+
+  return t;
+}
+
+fn completeHitQuad(ray: Ray, q: vec3f, u: vec3f, v: vec3f, h: ptr<function, Hit>)
+{
+  (*h).pos = ray.ori + ray.t * ray.dir;
+  (*h).nrm = normalize(cross(u, v));
+}
+
 fn evalMaterialLambert(in: Ray, h: Hit, albedo: vec3f, outCol: ptr<function, vec3f>, outDir: ptr<function, vec3f>) -> bool
 {
   let nrm = select(h.nrm, -h.nrm, dot(in.dir, h.nrm) > 0);
@@ -262,18 +297,17 @@ fn evalMaterial(in: Ray, h: Hit, outCol: ptr<function, vec3f>, outDir: ptr<funct
 fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, objId: ptr<function, u32>)
 { 
   for(var i=objStartIndex; i<objStartIndex + objCount; i++) {
+    var currDist: f32;
     let obj = &objects[i];
     let data = shapes[(*obj).shapeIndex];
     switch((*obj).shapeType) {
       case SHAPE_TYPE_SPHERE: {
-        var currDist = intersectSphere(*ray, data.xyz, data.w);
-        if(currDist < (*ray).t) {
-          (*ray).t = currDist;
-          *objId = i;
-        }
+        currDist = intersectSphere(*ray, data.xyz, data.w);
       }
       case SHAPE_TYPE_QUAD: {
-        return;
+        let u = shapes[(*obj).shapeIndex + 1];
+        let v = shapes[(*obj).shapeIndex + 2];
+        currDist = intersectQuad(*ray, data.xyz, u.xyz, v.xyz);
       }
       case SHAPE_TYPE_MESH: {
         return;
@@ -281,6 +315,11 @@ fn intersectObjects(ray: ptr<function, Ray>, objStartIndex: u32, objCount: u32, 
       default: {
         return;
       }
+    }
+
+    if(currDist < (*ray).t) {
+      (*ray).t = currDist;
+      *objId = i;
     }
   }
 }
@@ -342,7 +381,9 @@ fn intersectScene(ray: ptr<function, Ray>, hit: ptr<function, Hit>) -> bool
         completeHitSphere(*ray, data.xyz, data.w, hit);
       }
       case SHAPE_TYPE_QUAD: {
-        return false;
+        let u = shapes[(*obj).shapeIndex + 1];
+        let v = shapes[(*obj).shapeIndex + 2];
+        completeHitQuad(*ray, data.xyz, u.xyz, v.xyz, hit);
       }
       case SHAPE_TYPE_MESH: {
         return false;

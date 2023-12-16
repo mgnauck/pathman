@@ -3,8 +3,9 @@ const ASPECT = 16.0 / 10.0;
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
-const ACTIVE_SCENE = "RIOW";
-//const ACTIVE_SCENE = "TEST";
+//const ACTIVE_SCENE = "SPHERES";
+const ACTIVE_SCENE = "QUADS";
+//const ACTIVE_SCENE = "RIOW";
 
 const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
@@ -257,9 +258,8 @@ function getObjAabb(objIndex)
       let v = vec3FromArr(shapes, (shapeOfs + 2) * SHAPE_LINE_SIZE);
       let aabb = initAabb();
       growAabb(aabb, q);
-      growAabb(aabb, vec3Add(q, u));
-      growAabb(aabb, vec3Add(q, v));
       growAabb(aabb, vec3Add(vec3Add(q, u), v));
+      padAabb(aabb);
       return aabb;
     }
     default:
@@ -284,6 +284,18 @@ function growAabb(aabb, v)
 {
   aabb.min = vec3Min(aabb.min, v);
   aabb.max = vec3Max(aabb.max, v);
+}
+
+function padAabb(aabb)
+{
+  let d = 0.0001;
+  for(let i=0; i<3; i++) {
+    if(Math.abs(aabb.max[i] - aabb.min[i]) < d) {
+      console.log("Padded " + i + ", " + aabb.min[i] + ", " + aabb.max[i]);
+      aabb.min[i] -= d * 0.5;
+      aabb.max[i] += d * 0.5;
+    }
+  }
 }
 
 function calcAabbArea(aabb)
@@ -366,13 +378,20 @@ function findBestCostIntervalSplit(objStartIndex, objCount, intervalCount)
 function addBvhNode(objStartIndex, objCount)
 {
   let nodeAabb = initAabb(); 
-  for(let i=0; i<objCount; i++)
-    nodeAabb = combineAabbs(nodeAabb, getObjAabb(objStartIndex + i));
+  for(let i=0; i<objCount; i++) {
+    let objAabb = getObjAabb(objStartIndex + i);
+    console.log("obj min: " + objAabb.min + ", max: " + objAabb.max);
+    nodeAabb = combineAabbs(nodeAabb, objAabb);
+  }
 
   bvhNodes.push(...nodeAabb.min);
   bvhNodes.push(objStartIndex);
   bvhNodes.push(...nodeAabb.max);
   bvhNodes.push(objCount);
+
+  console.log("node min: " + nodeAabb.min + ", max: " + nodeAabb.max);
+  console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
+  console.log("---");
 }
 
 function subdivideBvhNode(nodeIndex)
@@ -431,7 +450,7 @@ function createBvh()
   let start = performance.now();
   addBvhNode(0, objects.length / OBJECT_SIZE);
   subdivideBvhNode(0);
-  console.log("Create BVH: " + (performance.now() - start).toFixed(3) + " ms");
+  console.log("Create BVH: " + (performance.now() - start).toFixed(3) + " ms, node count: " + bvhNodes.length / BVH_NODE_SIZE);
 }
 
 async function createComputePipeline(shaderModule, pipelineLayout, entryPoint)
@@ -680,8 +699,18 @@ function update(time)
 {
   if(orbitCam) {
     let speed = 0.3;
-    let radius = (ACTIVE_SCENE == "TEST") ? 2 : 15;
-    let height = (ACTIVE_SCENE == "TEST") ? 0.5 : 2.5;
+    let radius;
+    if(ACTIVE_SCENE == "SPHERES")
+      radius = 2;
+    if(ACTIVE_SCENE == "QUADS")
+      radius = 5;
+    if(ACTIVE_SCENE == "RIOW")
+      radius = 15;
+    let height;
+    if(ACTIVE_SCENE == "SPHERES" || ACTIVE_SCENE == "QUADS")
+      height = 0.5;
+    if(ACTIVE_SCENE == "RIOW")
+      height = 2.5;
     setView(
       [ Math.sin(time * speed) * radius, height, Math.cos(time * speed) * radius ],
       vec3Normalize(eye));
@@ -729,11 +758,18 @@ function setView(lookFrom, lookAt)
 
 function resetView()
 {
-  if(ACTIVE_SCENE == "TEST") {
+  if(ACTIVE_SCENE == "SPHERES") {
     vertFov = 60;
     focDist = 3;
     focAngle = 0;
     setView([0, 0, 2], [0, 0, 0]);
+  }
+
+  if(ACTIVE_SCENE == "QUADS") {
+    vertFov = 80;
+    focDist = 3;
+    focAngle = 0;
+    setView([0, 0, 9], [0, 0, 0]);
   }
 
   if(ACTIVE_SCENE == "RIOW") {
@@ -833,7 +869,7 @@ async function startRender()
 
 function createScene()
 {
-  if(ACTIVE_SCENE == "TEST") {
+  if(ACTIVE_SCENE == "SPHERES") {
     addObject(SHAPE_TYPE_SPHERE, addSphere([0, -100.5, 0], 100), MAT_TYPE_LAMBERT, addLambert([0.5, 0.5, 0.5]));
     addObject(SHAPE_TYPE_SPHERE, addSphere([-1, 0, 0], 0.5), MAT_TYPE_LAMBERT, addLambert([0.6, 0.3, 0.3]));
 
@@ -842,6 +878,16 @@ function createScene()
     addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 0], -0.45), MAT_TYPE_GLASS, glassMatOfs);
 
     addObject(SHAPE_TYPE_SPHERE, addSphere([1, 0, 0], 0.5), MAT_TYPE_METAL, addMetal([0.3, 0.3, 0.6], 0));
+  }
+
+  if(ACTIVE_SCENE == "QUADS") {
+    addObject(SHAPE_TYPE_QUAD, addQuad([-3,-2, 5], [0, 0,-4], [0, 4, 0]), MAT_TYPE_LAMBERT, addLambert([1.0, 0.2, 0.2]));
+    addObject(SHAPE_TYPE_QUAD, addQuad([-2,-2, 0], [4, 0, 0], [0, 4, 0]), MAT_TYPE_LAMBERT, addLambert([0.2, 1.0, 0.2]));
+    addObject(SHAPE_TYPE_QUAD, addQuad([ 3,-2, 1], [0, 0, 4], [0, 4, 0]), MAT_TYPE_LAMBERT, addLambert([0.2, 0.2, 1.0]));
+    addObject(SHAPE_TYPE_QUAD, addQuad([-2, 3, 1], [4, 0, 0], [0, 0, 4]), MAT_TYPE_LAMBERT, addLambert([1.0, 0.5, 0.0]));
+    addObject(SHAPE_TYPE_QUAD, addQuad([-2,-3, 5], [4, 0, 0], [0, 0,-4]), MAT_TYPE_LAMBERT, addLambert([0.2, 0.8, 0.8]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 2.5], 1.5), MAT_TYPE_GLASS, addGlass([1, 1, 1], 1.5));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 2.5], 1.45), MAT_TYPE_LAMBERT, addLambert([0.3, 0.3, 0.6]));
   }
 
   if(ACTIVE_SCENE == "RIOW") {
