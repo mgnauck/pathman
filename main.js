@@ -4,8 +4,8 @@ const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = Math.ceil(CANVAS_WIDTH / ASPECT);
 
 //const ACTIVE_SCENE = "SPHERES";
-const ACTIVE_SCENE = "QUADS";
-//const ACTIVE_SCENE = "RIOW";
+//const ACTIVE_SCENE = "QUADS";
+const ACTIVE_SCENE = "RIOW";
 
 const MAX_RECURSION = 5;
 const SAMPLES_PER_PIXEL = 5;
@@ -288,12 +288,10 @@ function growAabb(aabb, v)
 
 function padAabb(aabb)
 {
-  let d = 0.0001;
   for(let i=0; i<3; i++) {
-    if(Math.abs(aabb.max[i] - aabb.min[i]) < d) {
-      console.log("Padded " + i + ", " + aabb.min[i] + ", " + aabb.max[i]);
-      aabb.min[i] -= d * 0.5;
-      aabb.max[i] += d * 0.5;
+    if(Math.abs(aabb.max[i] - aabb.min[i]) < Number.EPSILON) {
+      aabb.min[i] -= Number.EPSILON * 0.5;
+      aabb.max[i] += Number.EPSILON * 0.5;
     }
   }
 }
@@ -380,7 +378,7 @@ function addBvhNode(objStartIndex, objCount)
   let nodeAabb = initAabb(); 
   for(let i=0; i<objCount; i++) {
     let objAabb = getObjAabb(objStartIndex + i);
-    console.log("obj min: " + objAabb.min + ", max: " + objAabb.max);
+    //console.log("obj min: " + objAabb.min + ", max: " + objAabb.max);
     nodeAabb = combineAabbs(nodeAabb, objAabb);
   }
 
@@ -389,9 +387,9 @@ function addBvhNode(objStartIndex, objCount)
   bvhNodes.push(...nodeAabb.max);
   bvhNodes.push(objCount);
 
-  console.log("node min: " + nodeAabb.min + ", max: " + nodeAabb.max);
-  console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
-  console.log("---");
+  //console.log("node min: " + nodeAabb.min + ", max: " + nodeAabb.max);
+  //console.log("objStartIndex: " + objStartIndex + ", objCount: " + objCount);
+  //console.log("---");
 }
 
 function subdivideBvhNode(nodeIndex)
