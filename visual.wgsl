@@ -196,8 +196,7 @@ fn intersectQuad(ray: Ray, q: vec3f, u: vec3f, v: vec3f) -> f32
     return MAX_DISTANCE;
   }
 
-  let d = dot(nrm, q);
-  let t = (d - dot(nrm, ray.ori)) / denom;
+  let t = (dot(nrm, q) - dot(nrm, ray.ori)) / denom;
   if(t < EPSILON || t > ray.t) {
     return MAX_DISTANCE;
   }
@@ -208,11 +207,7 @@ fn intersectQuad(ray: Ray, q: vec3f, u: vec3f, v: vec3f) -> f32
   let a = dot(w, cross(planar, v));
   let b = dot(w, cross(u, planar));
 
-  if(a < 0 || 1 < a || b < 0 || 1 < b) {
-    return MAX_DISTANCE;
-  }
-
-  return t;
+  return select(t, MAX_DISTANCE, a < 0 || 1 < a || b < 0 || 1 < b);
 }
 
 fn completeHitQuad(ray: Ray, q: vec3f, u: vec3f, v: vec3f, h: ptr<function, Hit>)

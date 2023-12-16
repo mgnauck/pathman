@@ -887,7 +887,7 @@ function createScene()
     addObject(SHAPE_TYPE_QUAD, addQuad([-2, 3, 1], [4, 0, 0], [0, 0, 4]), MAT_TYPE_LAMBERT, addLambert([1.0, 0.5, 0.0]));
     addObject(SHAPE_TYPE_QUAD, addQuad([-2,-3, 5], [4, 0, 0], [0, 0,-4]), MAT_TYPE_LAMBERT, addLambert([0.2, 0.8, 0.8]));
     addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 2.5], 1.5), MAT_TYPE_GLASS, addGlass([1, 1, 1], 1.5));
-    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 2.5], 1.45), MAT_TYPE_LAMBERT, addLambert([0.3, 0.3, 0.6]));
+    addObject(SHAPE_TYPE_SPHERE, addSphere([0, 0, 2.5], 1.0), MAT_TYPE_LAMBERT, addLambert([0.0, 0.0, 1.0]));
   }
 
   if(ACTIVE_SCENE == "RIOW") {
