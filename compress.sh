@@ -19,7 +19,7 @@ function utilExists() {
 
 utilExists wgslminify
 utilExists js-payload-compress
-#utilExists terser
+utilExists terser
 
 infile=$1
 infile_ext="${infile##*.}"
