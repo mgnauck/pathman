@@ -1,4 +1,4 @@
-.swp
+*.swp
 output
 wgslminify
 js-payload-compress
